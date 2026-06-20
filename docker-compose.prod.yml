@@ -1,0 +1,15 @@
+services:
+  db:
+    restart: unless-stopped
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+  minio:
+    image: quay.io/minio/minio:latest
+    restart: unless-stopped
+  api:
+    restart: unless-stopped
+  worker:
+    restart: unless-stopped
+  worker-beat:
+    restart: unless-stopped

@@ -1,0 +1,67 @@
+from fastapi import APIRouter
+
+from app.api.v1.admin import router as admin_router
+from app.api.v1.automation import router as automation_router
+from app.api.v1.ai_tickets import ai_router as ai_router, router as ai_tickets_router
+from app.api.v1.assets import (
+    asset_categories_router,
+    asset_types_router,
+    router as assets_router,
+    vendors_router,
+)
+from app.api.v1.gdpr import router as gdpr_router
+from app.api.v1.health import router as health_router
+from app.api.v1.kb import router as kb_router
+from app.api.v1.notifications import router as notifications_router
+from app.api.v1.platform import router as platform_router
+from app.api.v1.reports import router as reports_router
+from app.api.v1.tickets import router as tickets_router
+from app.api.v1.virtual_agent import router as virtual_agent_router
+from app.api.v1.webhooks import router as webhooks_router
+from app.api.v1.webhooks_outbound import router as webhooks_outbound_router
+
+router = APIRouter()
+
+router.include_router(health_router)
+router.include_router(webhooks_router, tags=["webhooks"])
+router.include_router(tickets_router)
+router.include_router(notifications_router)
+router.include_router(admin_router)
+
+# AI enrichment endpoints:
+#   /api/v1/tickets/{id}/ai-classification         (GET, POST accept, POST reject)
+#   /api/v1/tickets/{id}/ai-duplicates             (GET, POST dismiss)
+# ai_tickets_router already carries prefix="/tickets"; mounting without an
+# additional prefix keeps all routes at /api/v1/tickets/... as designed.
+router.include_router(ai_tickets_router)
+
+# /api/v1/ai/classification-dataset  (admin HITL export)
+# ai_router carries prefix="/ai" — mounted at /api/v1/ai/...
+router.include_router(ai_router)
+
+# Asset Management (S2.1)
+router.include_router(assets_router)            # /api/v1/assets
+router.include_router(asset_types_router)       # /api/v1/asset-types
+router.include_router(asset_categories_router)  # /api/v1/asset-categories
+router.include_router(vendors_router)           # /api/v1/vendors
+
+# Knowledge Base (S3.1) — /api/v1/kb
+router.include_router(kb_router)
+
+# Platform API (S4.1) — /api/v1/platform/...
+router.include_router(platform_router, prefix="/platform")
+
+# Virtual Agent RAG engine (S4B.1) — /api/v1/virtual-agent/...
+router.include_router(virtual_agent_router)
+
+# GDPR Data Export & Right-to-Erasure (S6D) — /api/v1/gdpr/...
+router.include_router(gdpr_router)
+
+# Reporting & Analytics (S6C) — /api/v1/reports/...
+router.include_router(reports_router)
+
+# Automation Rules Engine (S6A) — /api/v1/automation/...
+router.include_router(automation_router)
+
+# Outbound Webhooks (S6B) — /api/v1/webhooks-config/...
+router.include_router(webhooks_outbound_router)

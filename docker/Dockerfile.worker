@@ -1,0 +1,12 @@
+FROM python:3.12-slim AS base
+WORKDIR /app
+RUN addgroup --system app && adduser --system --group app
+
+FROM base AS deps
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
+
+FROM deps AS final
+COPY --chown=app:app . .
+USER app
+CMD ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info", "-Q", "high,low"]

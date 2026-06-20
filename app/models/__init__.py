@@ -1,0 +1,158 @@
+from app.models.automation import AutomationLog, AutomationRule
+from app.models.ai_asset import AIPredictiveMaintenance
+from app.models.ai_ticket import AIDuplicateCandidate, AIResponseSuggestion, AITicketClassification
+from app.models.ai_usage import AIUsageDaily
+from app.models.asset import (
+    Asset,
+    AssetAttachment,
+    AssetCategory,
+    AssetCondition,
+    AssetHistory,
+    AssetHistoryAction,
+    AssetMaintenance,
+    AssetRelationship,
+    AssetStatus,
+    AssetStatusTransition,
+    AssetTicketLink,
+    AssetType,
+    MaintenanceStatus,
+    MaintenanceType,
+    RelationshipType,
+    Vendor,
+)
+from app.models.base import Base, TimestampMixin, TenantScopedMixin, uuid7_pk
+from app.models.identity import (
+    Department,
+    ITSMRole,
+    PlatformAuditLog,
+    Product,
+    Team,
+    TeamMember,
+    Tenant,
+    TenantSequence,
+    User,
+    UserDepartmentAssignment,
+    UserITSMRole,
+)
+from app.models.kb import (
+    KBArticle,
+    KBArticleAttachment,
+    KBArticleFeedback,
+    KBArticleStatus,
+    KBArticleTagAssignment,
+    KBArticleVersion,
+    KBArticleVisibility,
+    KBCategory,
+    KBSpace,
+    KBSpaceScope,
+    KBTag,
+    TicketKBLink,
+)
+from app.models.notification import Notification, NotificationPreference, NotificationType
+from app.models.system_logs import SystemLog
+from app.models.ticket import (
+    BusinessHoursConfig,
+    SLAPolicy,
+    Ticket,
+    TicketAttachment,
+    TicketCategory,
+    TicketComment,
+    TicketEscalation,
+    TicketHistory,
+    TicketPriority,
+    TicketStatus,
+    TicketTag,
+    TicketTagAssignment,
+    TicketType,
+    TicketWatcher,
+)
+from app.models.ticket_transitions import TicketStatusTransition
+from app.models.virtual_agent import VirtualAgentMessage, VirtualAgentSession
+from app.models.webhook import WebhookDelivery, WebhookEndpoint
+
+__all__ = [
+    "Base",
+    "TimestampMixin",
+    "TenantScopedMixin",
+    "uuid7_pk",
+    # identity
+    "Tenant",
+    "Product",
+    "Department",
+    "User",
+    "UserDepartmentAssignment",
+    "ITSMRole",
+    "UserITSMRole",
+    "Team",
+    "TeamMember",
+    "PlatformAuditLog",
+    "TenantSequence",
+    # ticket state machine
+    "TicketStatusTransition",
+    # ticketing
+    "BusinessHoursConfig",
+    "SLAPolicy",
+    "TicketCategory",
+    "Ticket",
+    "TicketHistory",
+    "TicketEscalation",
+    "TicketComment",
+    "TicketAttachment",
+    "TicketTag",
+    "TicketTagAssignment",
+    "TicketWatcher",
+    "TicketType",
+    "TicketStatus",
+    "TicketPriority",
+    # notifications
+    "Notification",
+    "NotificationPreference",
+    "NotificationType",
+    # observability
+    "SystemLog",
+    # AI enrichment
+    "AITicketClassification",
+    "AIDuplicateCandidate",
+    "AIResponseSuggestion",
+    "AIUsageDaily",
+    "AIPredictiveMaintenance",
+    # asset management
+    "AssetCategory",
+    "AssetType",
+    "Vendor",
+    "Asset",
+    "AssetStatus",
+    "AssetCondition",
+    "AssetHistoryAction",
+    "AssetStatusTransition",
+    "AssetRelationship",
+    "AssetHistory",
+    "AssetMaintenance",
+    "AssetAttachment",
+    "AssetTicketLink",
+    "MaintenanceType",
+    "MaintenanceStatus",
+    "RelationshipType",
+    # knowledge base
+    "KBSpace",
+    "KBSpaceScope",
+    "KBCategory",
+    "KBArticle",
+    "KBArticleStatus",
+    "KBArticleVisibility",
+    "KBArticleVersion",
+    "KBTag",
+    "KBArticleTagAssignment",
+    "KBArticleFeedback",
+    "KBArticleAttachment",
+    "TicketKBLink",
+    # virtual agent
+    "VirtualAgentSession",
+    "VirtualAgentMessage",
+    # automation rules engine
+    "AutomationRule",
+    "AutomationLog",
+    # outbound webhooks
+    "WebhookEndpoint",
+    "WebhookDelivery",
+]

@@ -1,0 +1,16 @@
+services:
+  test:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.test
+    environment:
+      DATABASE_URL: postgresql+asyncpg://itsm_user:itsm_pass@db:5432/itsm_db
+      REDIS_URL: redis://redis:6379/0
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./app:/app/app
+      - ./tests:/app/tests
+      - ./migrations:/app/migrations

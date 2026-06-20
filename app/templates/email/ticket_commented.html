@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block subject %}New comment on ticket {{ ticket_number }}{% endblock %}</title>
+</head>
+<body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;padding:24px;">
+{% block body %}
+<h2 style="color:#1a56db;">New Comment</h2>
+<p>A new comment has been added to ticket <strong>{{ ticket_number }}</strong>.</p>
+{% if title %}<p><strong>Subject:</strong> {{ title }}</p>{% endif %}
+{% if body %}<p>{{ body }}</p>{% endif %}
+<p style="margin-top:24px;color:#6b7280;font-size:12px;">You are receiving this because you are watching this ticket.</p>
+{% endblock %}
+</body>
+</html>

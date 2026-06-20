@@ -1,0 +1,8 @@
+# LOCAL-ONLY override (auto-loaded by `docker compose`, NOT deployed to prod).
+# Publishes the itsm/Chatbot Postgres on the standard host port 5432.
+# Prod keeps 5433 (its system PostgreSQL owns 5432) via its own override.
+services:
+  db:
+    restart: unless-stopped
+    ports: !override
+      - "5432:5432"

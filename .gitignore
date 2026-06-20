@@ -1,0 +1,43 @@
+# ── Secrets / environment ─────────────────────────────────────────────
+# Real credentials live in .env (DB, IAM, MinIO, Anthropic). NEVER commit it.
+.env
+.env.*
+!.env.example
+
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ── Test / type / lint caches ─────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# ── Virtual environments ──────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Editor / OS ───────────────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+
+# ── Logs / local data ─────────────────────────────────────────────────
+*.log
+
+# ── Stray local artifacts (accidental dirs) ───────────────────────────
+.sixth/
+scripts;C/
