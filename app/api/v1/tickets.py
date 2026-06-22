@@ -97,6 +97,18 @@ def _is_manager_or_above(current_user: CurrentUser) -> bool:
     return bool(set(current_user.roles) & _MANAGER_ROLES)
 
 
+def _require_owner_or_agent(current_user: CurrentUser, ticket) -> None:
+    """Authorize a write on a specific ticket.
+
+    Agents and above may act on any ticket in the tenant. Everyone else
+    (end users / service accounts) may act only on a ticket they requested.
+    """
+    if _is_agent_or_above(current_user):
+        return
+    if ticket.requester_id != current_user.local_user_id:
+        raise AuthorizationError("You can only act on tickets you created")
+
+
 async def _attach_product_names(
     db: AsyncSession, responses: list[TicketResponse]
 ) -> list[TicketResponse]:
@@ -395,6 +407,21 @@ async def update_ticket(
 
     updates = body.model_dump(exclude_none=True)
 
+    # RBAC: agents and above may change any field on any ticket in the tenant.
+    # Everyone else (end users / service accounts) may change only `status`,
+    # and only on a ticket they themselves requested. This preserves the
+    # chatbot's user-resolve flow (it only ever sends {"status": ...}) while
+    # blocking IDOR / priority/assignee escalation by non-agents.
+    if updates and not _is_agent_or_above(current_user):
+        if ticket.requester_id != current_user.local_user_id:
+            raise AuthorizationError("You can only modify tickets you created")
+        restricted = set(updates) - {"status"}
+        if restricted:
+            raise AuthorizationError(
+                "Requesters may only change a ticket's status, not: "
+                + ", ".join(sorted(restricted))
+            )
+
     if "assignee_id" in updates or "team_id" in updates:
         ticket = await _service.assign_ticket(
             ticket=ticket,
@@ -506,7 +533,9 @@ async def create_comment(
 
     repo = TicketRepository(db)
     # Scoped to tenant — IDOR guard
-    await repo.get_or_404(ticket_id, current_user.tenant_id)  # type: ignore[arg-type]
+    ticket = await repo.get_or_404(ticket_id, current_user.tenant_id)  # type: ignore[arg-type]
+    # Non-agents may only comment on tickets they themselves requested
+    _require_owner_or_agent(current_user, ticket)
 
     # Validate parent comment belongs to the same ticket
     if body.parent_comment_id is not None:
@@ -681,7 +710,9 @@ async def create_attachment_presign(
 
     repo = TicketRepository(db)
     # Tenant-scoped lookup — IDOR guard; tenant_id never from request body
-    await repo.get_or_404(ticket_id, current_user.tenant_id)  # type: ignore[arg-type]
+    ticket = await repo.get_or_404(ticket_id, current_user.tenant_id)  # type: ignore[arg-type]
+    # Non-agents may only attach to tickets they themselves requested
+    _require_owner_or_agent(current_user, ticket)
 
     # Validates MIME allowlist + extension blocklist + filename length
     upload_url, storage_key = await storage.presigned_upload_url(
@@ -765,7 +796,9 @@ async def delete_attachment(
     _require_tenant(current_user)
 
     repo = TicketRepository(db)
-    await repo.get_or_404(ticket_id, current_user.tenant_id)  # type: ignore[arg-type]
+    ticket = await repo.get_or_404(ticket_id, current_user.tenant_id)  # type: ignore[arg-type]
+    # Non-agents may only delete attachments on tickets they requested
+    _require_owner_or_agent(current_user, ticket)
 
     result = await db.execute(
         select(TicketAttachment).where(
@@ -807,7 +840,9 @@ async def assign_tag(
     _require_tenant(current_user)
 
     repo = TicketRepository(db)
-    await repo.get_or_404(ticket_id, current_user.tenant_id)  # type: ignore[arg-type]
+    ticket = await repo.get_or_404(ticket_id, current_user.tenant_id)  # type: ignore[arg-type]
+    # Non-agents may only tag tickets they themselves requested
+    _require_owner_or_agent(current_user, ticket)
 
     # Tag must belong to the same tenant — IDOR guard
     tag_result = await db.execute(
@@ -847,7 +882,9 @@ async def remove_tag(
     _require_tenant(current_user)
 
     repo = TicketRepository(db)
-    await repo.get_or_404(ticket_id, current_user.tenant_id)  # type: ignore[arg-type]
+    ticket = await repo.get_or_404(ticket_id, current_user.tenant_id)  # type: ignore[arg-type]
+    # Non-agents may only untag tickets they themselves requested
+    _require_owner_or_agent(current_user, ticket)
 
     result = await db.execute(
         select(TicketTagAssignment).where(

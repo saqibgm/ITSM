@@ -296,6 +296,103 @@ async def test_valid_status_transition_in_progress(agent_client, test_tenant_id)
 
 
 # ===========================================================================
+# PATCH /api/v1/tickets/{id}  — write RBAC
+# ===========================================================================
+
+
+async def test_requester_can_update_status_on_own_ticket(end_user_client):
+    """An end user may change the status of a ticket they themselves created."""
+    with patch("app.workers.tasks_ai_ticket.process_new_ticket.delay", return_value=None):
+        create_resp = await end_user_client.post(
+            "/api/v1/tickets", json=_valid_ticket_body()
+        )
+    assert create_resp.status_code == 201, create_resp.text
+    ticket_id = create_resp.json()["id"]
+
+    patch_resp = await end_user_client.patch(
+        f"/api/v1/tickets/{ticket_id}", json={"status": "in_progress"}
+    )
+    # Allowed by RBAC — 200 on success, or 409 only if the transition itself
+    # is invalid. Must NOT be 403 (the chatbot resolve flow relies on this).
+    assert patch_resp.status_code != 403, patch_resp.text
+    assert patch_resp.status_code in (200, 409)
+
+
+async def test_requester_cannot_change_priority_on_own_ticket(end_user_client):
+    """An end user may not change non-status fields, even on their own ticket."""
+    with patch("app.workers.tasks_ai_ticket.process_new_ticket.delay", return_value=None):
+        create_resp = await end_user_client.post(
+            "/api/v1/tickets", json=_valid_ticket_body()
+        )
+    assert create_resp.status_code == 201, create_resp.text
+    ticket_id = create_resp.json()["id"]
+
+    patch_resp = await end_user_client.patch(
+        f"/api/v1/tickets/{ticket_id}", json={"priority": "high"}
+    )
+    assert patch_resp.status_code == 403, patch_resp.text
+
+
+async def test_requester_cannot_update_someone_elses_ticket(
+    agent_client, end_user_client
+):
+    """An end user may not modify a ticket they did not create (IDOR guard)."""
+    with patch("app.workers.tasks_ai_ticket.process_new_ticket.delay", return_value=None):
+        create_resp = await agent_client.post("/api/v1/tickets", json=_valid_ticket_body())
+    assert create_resp.status_code == 201, create_resp.text
+    ticket_id = create_resp.json()["id"]
+
+    patch_resp = await end_user_client.patch(
+        f"/api/v1/tickets/{ticket_id}", json={"status": "in_progress"}
+    )
+    assert patch_resp.status_code == 403, patch_resp.text
+
+
+async def test_agent_can_change_priority(agent_client):
+    """Agents retain full write access to any field."""
+    with patch("app.workers.tasks_ai_ticket.process_new_ticket.delay", return_value=None):
+        create_resp = await agent_client.post("/api/v1/tickets", json=_valid_ticket_body())
+    assert create_resp.status_code == 201, create_resp.text
+    ticket_id = create_resp.json()["id"]
+
+    patch_resp = await agent_client.patch(
+        f"/api/v1/tickets/{ticket_id}", json={"priority": "high"}
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    assert patch_resp.json()["priority"] == "high"
+
+
+async def test_requester_can_comment_on_own_ticket(end_user_client):
+    """An end user may post a public comment on a ticket they created."""
+    with patch("app.workers.tasks_ai_ticket.process_new_ticket.delay", return_value=None):
+        create_resp = await end_user_client.post(
+            "/api/v1/tickets", json=_valid_ticket_body()
+        )
+    assert create_resp.status_code == 201, create_resp.text
+    ticket_id = create_resp.json()["id"]
+
+    resp = await end_user_client.post(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        json={"body": "Any update on this?", "is_internal": False},
+    )
+    assert resp.status_code == 201, resp.text
+
+
+async def test_end_user_cannot_comment_on_others_ticket(agent_client, end_user_client):
+    """An end user may not comment on a ticket they did not create (IDOR guard)."""
+    with patch("app.workers.tasks_ai_ticket.process_new_ticket.delay", return_value=None):
+        create_resp = await agent_client.post("/api/v1/tickets", json=_valid_ticket_body())
+    assert create_resp.status_code == 201, create_resp.text
+    ticket_id = create_resp.json()["id"]
+
+    resp = await end_user_client.post(
+        f"/api/v1/tickets/{ticket_id}/comments",
+        json={"body": "Commenting on a ticket that isn't mine.", "is_internal": False},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+# ===========================================================================
 # Comments — internal note visibility
 # ===========================================================================
 
