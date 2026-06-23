@@ -19,6 +19,7 @@ from app.database import get_db
 from app.exceptions import AuthorizationError, ResourceNotFoundError, ValidationError
 from app.models.ticket import (
     Ticket,
+    TicketApproval,
     TicketAttachment,
     TicketComment,
     TicketEscalation,
@@ -422,6 +423,11 @@ async def update_ticket(
                 + ", ".join(sorted(restricted))
             )
 
+    # Approvals are decided via POST /{id}/approval (with approver authz + audit),
+    # never by a direct status PATCH — block the shortcut.
+    if updates.get("status") in ("approved", "rejected"):
+        raise ValidationError("Use POST /tickets/{id}/approval to approve or reject this ticket.")
+
     if "assignee_id" in updates or "team_id" in updates:
         ticket = await _service.assign_ticket(
             ticket=ticket,
@@ -439,6 +445,18 @@ async def update_ticket(
             db=db,
         )
 
+    # Entering pending_approval opens a pending approval record (idempotent) so
+    # an approver can act on it via the approval endpoint.
+    if ticket.status == TicketStatus.pending_approval:
+        _open = await db.execute(
+            select(TicketApproval).where(
+                TicketApproval.ticket_id == ticket.id,
+                TicketApproval.status == "pending",
+            )
+        )
+        if _open.scalar_one_or_none() is None:
+            db.add(TicketApproval(ticket_id=ticket.id, requested_by=current_user.local_user_id))
+
     await db.commit()
     await db.refresh(ticket)
 
@@ -453,6 +471,81 @@ async def update_ticket(
     except Exception:
         pass  # webhook dispatch failure must never fail the update
 
+    # Fire the (previously-unused) pending-approval automation trigger so tenant
+    # rules / approver notifications can run.
+    if ticket.status == TicketStatus.pending_approval:
+        try:
+            from app.workers.tasks_automation import run_ticket_automation
+            run_ticket_automation.delay(str(ticket.id), "ticket_pending_approval")
+        except Exception:
+            pass
+
+    return (
+        await _attach_user_names(
+            db, await _attach_product_names(db, [TicketResponse.model_validate(ticket)])
+        )
+    )[0]
+
+
+# ---------------------------------------------------------------------------
+# POST /tickets/{ticket_id}/approval  (decide a pending approval)
+# ---------------------------------------------------------------------------
+
+
+class ApprovalDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: str = Field(..., pattern="^(approve|reject)$")
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/{ticket_id}/approval", response_model=TicketResponse)
+async def decide_approval(
+    ticket_id: UUID,
+    body: ApprovalDecisionRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TicketResponse:
+    """Approve/reject a ticket pending approval — authz'd + audited, and drives
+    the validated status transition (the only way to reach approved/rejected)."""
+    _require_tenant(current_user)
+    repo = TicketRepository(db)
+    ticket = await repo.get_or_404(ticket_id, current_user.tenant_id)
+
+    res = await db.execute(
+        select(TicketApproval)
+        .where(TicketApproval.ticket_id == ticket.id, TicketApproval.status == "pending")
+        .order_by(TicketApproval.created_at.desc())
+    )
+    approval = res.scalars().first()
+    if approval is None:
+        raise ValidationError("This ticket has no pending approval.")
+
+    # Only a manager/admin, or the explicitly-designated approver, may decide.
+    is_designated = (
+        approval.approver_id is not None
+        and approval.approver_id == current_user.local_user_id
+    )
+    if not (_is_manager_or_above(current_user) or is_designated):
+        raise AuthorizationError("Only an approver or a manager/admin may decide this approval.")
+
+    approved = body.decision == "approve"
+    new_status = TicketStatus.approved if approved else TicketStatus.rejected
+
+    # Record the decision (audit), then drive the validated status transition.
+    approval.status = "approved" if approved else "rejected"
+    approval.decided_by = current_user.local_user_id
+    approval.decided_at = func.now()
+    approval.comment = body.comment
+    db.add(approval)
+
+    ticket = await _service.update_ticket(
+        ticket=ticket,
+        updates={"status": new_status.value},
+        actor_id=current_user.local_user_id,
+        db=db,
+    )
+    await db.commit()
+    await db.refresh(ticket)
     return (
         await _attach_user_names(
             db, await _attach_product_names(db, [TicketResponse.model_validate(ticket)])

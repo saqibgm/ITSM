@@ -373,6 +373,9 @@ class Ticket(Base, TimestampMixin):
     escalations: Mapped[list["TicketEscalation"]] = relationship(
         "TicketEscalation", back_populates="ticket", cascade="all, delete-orphan"
     )
+    approvals: Mapped[list["TicketApproval"]] = relationship(
+        "TicketApproval", back_populates="ticket", cascade="all, delete-orphan"
+    )
     tag_assignments: Mapped[list["TicketTagAssignment"]] = relationship(
         "TicketTagAssignment", back_populates="ticket", cascade="all, delete-orphan"
     )
@@ -465,6 +468,53 @@ class TicketEscalation(Base):
     escalated_to_user: Mapped[Optional["User"]] = relationship(  # type: ignore[name-defined]
         "User", foreign_keys=[escalated_to]
     )
+
+
+class TicketApproval(Base):
+    """An approval request on a ticket (change / access-request workflow).
+
+    Created when a ticket moves to `pending_approval`; the decision endpoint
+    records approve/reject and drives the status transition. Tenant isolation is
+    via the parent ticket (no own tenant_id / RLS — mirrors TicketEscalation).
+    """
+
+    __tablename__ = "ticket_approvals"
+
+    id: Mapped[UUID] = mapped_column(sa.UUID(as_uuid=True), primary_key=True, default=uuid7)
+    ticket_id: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True),
+        sa.ForeignKey("tickets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    requested_by: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    # Designated approver; NULL means any manager/admin may decide.
+    approver_id: Mapped[Optional[UUID]] = mapped_column(
+        sa.UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(
+        sa.VARCHAR(20), nullable=False, server_default=sa.text("'pending'"),
+    )  # pending | approved | rejected
+    decided_by: Mapped[Optional[UUID]] = mapped_column(
+        sa.UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    decided_at: Mapped[Optional[datetime]] = mapped_column(
+        sa.TIMESTAMP(timezone=True), nullable=True,
+    )
+    comment: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.func.now(),
+    )
+
+    ticket: Mapped["Ticket"] = relationship("Ticket", back_populates="approvals")
 
 
 # ---------------------------------------------------------------------------
