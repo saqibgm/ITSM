@@ -14,9 +14,25 @@ from typing import Any
 
 from sqlalchemy import func
 
-from app.models.ticket import BusinessHoursConfig, SLAPolicy, Ticket, TicketStatus
+from app.models.ticket import BusinessHoursConfig, SLAPolicy, Ticket, TicketStatus, TicketPriority
 
 logger = logging.getLogger(__name__)
+
+# Priority ladder, low → critical. Used to auto-escalate a ticket one level on
+# SLA breach (a default escalation — no per-tenant automation rule required).
+_PRIORITY_LADDER = [
+    TicketPriority.low, TicketPriority.medium, TicketPriority.high, TicketPriority.critical,
+]
+
+
+def escalated_priority(current) -> TicketPriority:
+    """Next priority up the ladder; critical (top) stays critical.
+
+    Pure + tolerant of either a TicketPriority or its string value.
+    """
+    cur = current if isinstance(current, TicketPriority) else TicketPriority(current)
+    idx = _PRIORITY_LADDER.index(cur)
+    return _PRIORITY_LADDER[min(idx + 1, len(_PRIORITY_LADDER) - 1)]
 
 
 class SLAService:

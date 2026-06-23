@@ -77,7 +77,8 @@ async def _async_check_sla_breaches() -> None:
             while True:
                 # Find breachable tickets using DB server NOW() — never Python datetime
                 result = await db.execute(
-                    select(Ticket.id, Ticket.assignee_id, Ticket.team_id, Ticket.tenant_id)
+                    select(Ticket.id, Ticket.assignee_id, Ticket.team_id, Ticket.tenant_id,
+                           Ticket.priority, Ticket.requester_id)
                     .where(
                         and_(
                             Ticket.sla_paused_at.is_(None),
@@ -105,6 +106,24 @@ async def _async_check_sla_breaches() -> None:
                     .where(Ticket.id.in_(ticket_ids))
                     .values(sla_breached=True)
                 )
+
+                # Default escalation (no per-tenant rule needed): bump priority
+                # one level toward critical and record a TicketEscalation. Tenant
+                # automation rules on ticket_sla_breached still run on top.
+                from app.models.ticket import TicketEscalation
+                from app.services.sla_service import escalated_priority
+                for row in rows:
+                    new_pri = escalated_priority(row.priority)
+                    if new_pri != row.priority:
+                        await db.execute(
+                            update(Ticket).where(Ticket.id == row.id).values(priority=new_pri)
+                        )
+                    db.add(TicketEscalation(
+                        ticket_id=row.id,
+                        escalated_by=row.requester_id,   # system action
+                        escalated_to=row.assignee_id,
+                        reason="SLA breach — auto-escalated",
+                    ))
                 await db.commit()
 
                 total_breached += len(ticket_ids)
