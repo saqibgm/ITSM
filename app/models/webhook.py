@@ -43,6 +43,18 @@ class WebhookEndpoint(Base, TimestampMixin):
     url: Mapped[str] = mapped_column(sa.Text, nullable=False)
     # Stored as-is; used only for HMAC signing — never returned in API responses.
     secret: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    # Delivery payload format. 'generic' = signed raw JSON (default, back-compat);
+    # 'teams' = Microsoft Teams MessageCard, sent unsigned (the incoming-webhook
+    # URL is itself the secret). Extensible (slack, zapier, …).
+    format: Mapped[str] = mapped_column(
+        sa.VARCHAR(20), nullable=False, default="generic",
+        server_default=sa.text("'generic'"),
+    )
+    # Marketplace provenance: the catalog key this endpoint was created from
+    # (e.g. 'microsoft_teams'); NULL for raw/hand-created webhooks.
+    integration_key: Mapped[Optional[str]] = mapped_column(
+        sa.VARCHAR(50), nullable=True
+    )
     events: Mapped[list] = mapped_column(
         JSONB, nullable=False, server_default=sa.text("'[]'::jsonb")
     )

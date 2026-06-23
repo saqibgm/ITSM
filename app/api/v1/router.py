@@ -19,6 +19,7 @@ from app.api.v1.tickets import router as tickets_router
 from app.api.v1.virtual_agent import router as virtual_agent_router
 from app.api.v1.webhooks import router as webhooks_router
 from app.api.v1.webhooks_outbound import router as webhooks_outbound_router
+from app.api.v1.integrations import router as integrations_router
 
 router = APIRouter()
 
@@ -65,3 +66,6 @@ router.include_router(automation_router)
 
 # Outbound Webhooks (S6B) — /api/v1/webhooks-config/...
 router.include_router(webhooks_outbound_router)
+
+# Integration marketplace catalog (4b) — /api/v1/integrations/catalog
+router.include_router(integrations_router)

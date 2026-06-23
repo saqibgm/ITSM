@@ -19,6 +19,7 @@ Security:
 
 import base64
 import logging
+import secrets
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -93,17 +94,31 @@ async def _get_endpoint_or_404(
 # ---------------------------------------------------------------------------
 
 
+_VALID_FORMATS = ("generic", "teams")
+
+
 class CreateWebhookEndpointRequest(BaseModel):
     name: str = Field(..., max_length=255)
     url: str
-    secret: str = Field(..., min_length=16)
+    # Optional: required for 'generic' (enforced in the route), auto-generated
+    # for formats like 'teams' where the URL is itself the secret.
+    secret: Optional[str] = Field(default=None, min_length=16)
     events: list[str] = Field(default_factory=list)
+    format: str = Field(default="generic")
+    integration_key: Optional[str] = Field(default=None, max_length=50)
 
     @field_validator("url")
     @classmethod
     def validate_url(cls, v: str) -> str:
         if not (v.startswith("http://") or v.startswith("https://")):
             raise ValueError("URL must be http or https")
+        return v
+
+    @field_validator("format")
+    @classmethod
+    def validate_format(cls, v: str) -> str:
+        if v not in _VALID_FORMATS:
+            raise ValueError(f"format must be one of {_VALID_FORMATS}")
         return v
 
 
@@ -113,12 +128,20 @@ class UpdateWebhookEndpointRequest(BaseModel):
     secret: Optional[str] = Field(default=None, min_length=16)
     events: Optional[list[str]] = None
     is_active: Optional[bool] = None
+    format: Optional[str] = None
 
     @field_validator("url")
     @classmethod
     def validate_url(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and not (v.startswith("http://") or v.startswith("https://")):
             raise ValueError("URL must be http or https")
+        return v
+
+    @field_validator("format")
+    @classmethod
+    def validate_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _VALID_FORMATS:
+            raise ValueError(f"format must be one of {_VALID_FORMATS}")
         return v
 
 
@@ -129,6 +152,8 @@ class WebhookEndpointResponse(BaseModel):
     url: str
     secret: str
     events: list
+    format: str
+    integration_key: Optional[str]
     is_active: bool
     failure_count: int
     last_success_at: Optional[datetime]
@@ -218,12 +243,23 @@ async def create_endpoint(
 ) -> WebhookEndpointResponse:
     _require_admin(current_user)
 
+    # 'generic' webhooks are HMAC-signed, so a secret is mandatory. Formats like
+    # 'teams' don't sign (the URL is the secret) — generate a placeholder to
+    # satisfy the NOT NULL column without burdening the marketplace UI.
+    secret = body.secret
+    if not secret:
+        if body.format == "generic":
+            raise ValidationError("secret is required for generic webhooks")
+        secret = secrets.token_hex(16)
+
     endpoint = WebhookEndpoint(
         tenant_id=current_user.tenant_id,
         name=body.name,
         url=body.url,
-        secret=body.secret,
+        secret=secret,
         events=body.events,
+        format=body.format,
+        integration_key=body.integration_key,
         is_active=True,
         failure_count=0,
     )
@@ -272,6 +308,8 @@ async def update_endpoint(
         endpoint.secret = body.secret
     if body.events is not None:
         endpoint.events = body.events
+    if body.format is not None:
+        endpoint.format = body.format
     if body.is_active is not None:
         endpoint.is_active = body.is_active
 

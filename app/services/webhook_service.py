@@ -46,6 +46,53 @@ _MAX_RESPONSE_BODY = 500
 _MAX_FAILURES = 10
 _DELIVERY_TIMEOUT = 10.0  # seconds
 
+_TEAMS_THEME_COLOR = "0076D7"
+_TEAMS_MAX_FACTS = 12
+
+
+def _humanize_event(event_type: str) -> str:
+    # "ticket.created" -> "Ticket Created"
+    return event_type.replace(".", " ").replace("_", " ").title()
+
+
+def _teams_card(event_type: str, payload: dict) -> dict:
+    """Render a domain event as a Microsoft Teams MessageCard.
+
+    Generic by design: the event name becomes the title and each top-level
+    scalar field of the payload becomes a fact, so it works for any event type
+    (ticket/asset/kb/ping) without per-event templates.
+    """
+    facts = []
+    for key, value in (payload or {}).items():
+        if isinstance(value, (dict, list)) or value is None:
+            continue
+        facts.append({"name": str(key), "value": str(value)[:_MAX_RESPONSE_BODY]})
+        if len(facts) >= _TEAMS_MAX_FACTS:
+            break
+    return {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "summary": _humanize_event(event_type),
+        "themeColor": _TEAMS_THEME_COLOR,
+        "title": _humanize_event(event_type),
+        "sections": [{"facts": facts, "markdown": False}],
+    }
+
+
+def format_payload(fmt: str, event_type: str, payload: dict) -> tuple[str, bool]:
+    """Return (json_body, should_sign) for the given delivery format.
+
+    'generic' → the raw event payload, HMAC-signed (default / back-compat).
+    'teams'   → a Teams MessageCard, unsigned (the incoming-webhook URL is the
+                secret; Teams does not verify a signature header).
+    Unknown formats fall back to 'generic' so a bad value can never drop a
+    delivery silently.
+    """
+    if fmt == "teams":
+        body = _teams_card(event_type, payload)
+        return json.dumps(body, separators=(",", ":"), ensure_ascii=False), False
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False), True
+
 
 class WebhookService:
     """Domain service for outbound webhook fan-out and delivery."""
@@ -171,21 +218,25 @@ class WebhookService:
             db.add(delivery)
             return
 
-        # 2. Build HMAC signature
-        payload_json = json.dumps(delivery.payload, separators=(",", ":"), ensure_ascii=False)
-        sig_hex = hmac.new(
-            endpoint.secret.encode("utf-8"),
-            payload_json.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
+        # 2. Format the body for the endpoint's target + sign if applicable.
+        #    'teams' is sent as an unsigned MessageCard (the URL is the secret).
+        payload_json, should_sign = format_payload(
+            endpoint.format or "generic", delivery.event_type, delivery.payload
+        )
 
         headers = {
             "Content-Type": "application/json",
-            "X-ITSM-Signature": f"sha256={sig_hex}",
             "X-ITSM-Event": delivery.event_type,
             "X-ITSM-Delivery": str(delivery.id),
             "User-Agent": "ITSM-Webhook/1.0",
         }
+        if should_sign:
+            sig_hex = hmac.new(
+                endpoint.secret.encode("utf-8"),
+                payload_json.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+            headers["X-ITSM-Signature"] = f"sha256={sig_hex}"
 
         # 3. POST
         success = False
