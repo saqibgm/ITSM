@@ -441,6 +441,20 @@ class AutomationService:
                 db.add(ticket)
                 await db.flush()
 
+        elif action_type == "auto_assign":
+            # Smart assignment: give the ticket to the least-loaded member of its
+            # team (or the action's team_id) — the agent with the fewest open
+            # tickets. No-op if there's no team or the team has no members.
+            team_id = action.get("team_id") or ticket.team_id
+            if team_id:
+                picked = await self._pick_least_loaded_assignee(
+                    db, ticket.tenant_id, UUID(str(team_id))
+                )
+                if picked is not None:
+                    ticket.assignee_id = picked
+                    db.add(ticket)
+                    await db.flush()
+
         elif action_type == "set_priority":
             priority_raw = action.get("priority", "")
             try:
@@ -475,6 +489,43 @@ class AutomationService:
                 "automation_unknown_action_type",
                 extra={"action_type": action_type, "rule_id": str(rule.id)},
             )
+
+    async def _pick_least_loaded_assignee(self, db, tenant_id, team_id):
+        """Least-loaded member of `team_id` (fewest open tickets), or None.
+
+        'Open' = not resolved/closed/cancelled and not soft-deleted, scoped to
+        the ticket's tenant. Ties break deterministically by user_id.
+        """
+        from sqlalchemy import func
+        from app.models.identity import TeamMember
+        from app.models.ticket import Ticket, TicketStatus
+
+        terminal = (
+            TicketStatus.resolved.value,
+            TicketStatus.closed.value,
+            TicketStatus.cancelled.value,
+        )
+        load = (
+            select(Ticket.assignee_id.label("uid"), func.count(Ticket.id).label("load"))
+            .where(
+                Ticket.tenant_id == tenant_id,
+                Ticket.deleted_at.is_(None),
+                Ticket.status.notin_(terminal),
+            )
+            .group_by(Ticket.assignee_id)
+            .subquery()
+        )
+        row = (
+            await db.execute(
+                select(TeamMember.user_id)
+                .select_from(TeamMember)
+                .outerjoin(load, load.c.uid == TeamMember.user_id)
+                .where(TeamMember.team_id == team_id)
+                .order_by(func.coalesce(load.c.load, 0).asc(), TeamMember.user_id.asc())
+                .limit(1)
+            )
+        ).first()
+        return row[0] if row else None
 
     async def _add_ticket_tag(
         self, db: AsyncSession, ticket: Ticket, tag_name: str
