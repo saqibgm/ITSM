@@ -60,20 +60,28 @@ _TENANT_ROLE_RANK = {"admin": 4, "manager": 3, "agent": 2, "service_account": 1,
 
 
 def _best_platform_role(iam_roles: list[str]) -> str | None:
-    """Highest platform role among the user's IAM roles, or None."""
+    """Highest platform role among the user's IAM roles, or None.
+
+    Matching is case-insensitive: in Keycloak `operator`/`user`/`bot`/`admin`
+    are *client* roles on project-iq (capitalized — 'Operator', 'Admin', …),
+    while super_admin/org_admin are *realm* roles. Callers pass the combined
+    realm+client set so client roles are honoured."""
     best = None
     for r in iam_roles:
-        mapped = _IAM_TO_PLATFORM_ROLE.get(r)
+        mapped = _IAM_TO_PLATFORM_ROLE.get(r.lower())
         if mapped and (best is None or _PLATFORM_ROLE_RANK[mapped] > _PLATFORM_ROLE_RANK[best]):
             best = mapped
     return best
 
 
 def _best_tenant_role(iam_roles: list[str]) -> str:
-    """Highest tenant role among the user's IAM roles (default end_user)."""
+    """Highest tenant role among the user's IAM roles (default end_user).
+
+    Case-insensitive — see _best_platform_role: 'Operator' (client role) →
+    'operator' → 'agent'. Pass the realm+client role set."""
     best = "end_user"
     for r in iam_roles:
-        mapped = _IAM_TO_TENANT_ROLE.get(r)
+        mapped = _IAM_TO_TENANT_ROLE.get(r.lower())
         if mapped and _TENANT_ROLE_RANK.get(mapped, 0) > _TENANT_ROLE_RANK.get(best, 0):
             best = mapped
     return best
@@ -261,8 +269,9 @@ async def get_current_user(
     # ------------------------------------------------------------------ #
     if org_id == settings.PLATFORM_ORG_ID:
         # Highest platform role across all IAM roles (super_admin/admin/org_admin
-        # → platform_admin; app_developer/operator → platform_support).
-        platform_role = _best_platform_role(iam_roles)
+        # → platform_admin; app_developer/operator → platform_support). Realm+client
+        # set — 'operator' is a client role.
+        platform_role = _best_platform_role(synced_iam_roles)
         if platform_role is None:
             raise AuthorizationError(
                 f"None of the IAM roles {iam_roles} is a recognised platform role"
@@ -391,8 +400,10 @@ async def get_current_user(
         raise AuthorizationError("Your account has been deactivated")
 
     # Map IAM role(s) → ITSM role name (highest-privilege wins; org_admin /
-    # super_admin → admin within this tenant).
-    default_itsm_role = _best_tenant_role(iam_roles)
+    # super_admin → admin within this tenant). Use the realm+client role set:
+    # operator/user/bot are *client* roles, so realm-only would miss them and
+    # operators would wrongly default to end_user instead of agent.
+    default_itsm_role = _best_tenant_role(synced_iam_roles)
 
     # Fetch any promoted roles from user_itsm_roles; fall back to default mapping
     assigned_roles = await _get_user_itsm_roles(db, user.id, tenant.id)
