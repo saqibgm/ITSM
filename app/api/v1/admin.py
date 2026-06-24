@@ -1,5 +1,6 @@
 """Tenant admin endpoints — settings, business hours, users, teams, SLA policies."""
 
+import re
 from datetime import date as date_type
 from datetime import datetime
 from datetime import time
@@ -10,13 +11,14 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
 from redis.asyncio import Redis
 from sqlalchemy import and_, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1._refscope import ref_create_tenant_id, ref_visible_filter, require_ref_write
 from app.auth.dependencies import CurrentUser, get_current_user, require_role
 from app.config import get_settings
 from app.database import get_db
-from app.exceptions import AuthorizationError, ResourceNotFoundError
+from app.exceptions import AuthorizationError, ResourceNotFoundError, ValidationError
 from app.models.identity import (
     Department,
     ITSMRole,
@@ -173,6 +175,7 @@ class ProductResponse(BaseModel):
     slug: str
     description: str | None = None
     is_active: bool
+    source: str = "manual"
 
 
 class TicketCategoryResponse(BaseModel):
@@ -778,16 +781,19 @@ async def sync_products(
         p = existing.get(slug)
         if p is None:
             db.add(Product(tenant_id=tenant_id, slug=slug,
-                           name=(item.name or slug), is_active=True))
+                           name=(item.name or slug), is_active=True, source="iam"))
         else:
+            # A manual product whose slug later appears in IAM is promoted to 'iam'.
+            p.source = "iam"
             if item.name and p.name != item.name:
                 p.name = item.name
             if not p.is_active:
                 p.is_active = True
 
-    # Soft-deactivate products no longer in the subscription (keep the row).
+    # Soft-deactivate IAM products no longer subscribed (keep the row). NEVER
+    # touch manual products — the sync only owns 'iam'-sourced rows.
     for slug, p in existing.items():
-        if slug not in subscribed_slugs and p.is_active:
+        if p.source == "iam" and slug not in subscribed_slugs and p.is_active:
             p.is_active = False
 
     await db.commit()
@@ -801,6 +807,107 @@ async def sync_products(
         ProductResponse.model_validate(p)
         for p in (await db.execute(q)).scalars().all()
     ]
+
+
+class CreateProductRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=255)
+    slug: str | None = Field(default=None, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class UpdateProductRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    is_active: bool | None = None
+
+
+def _slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")[:100]
+
+
+async def _get_tenant_product(db: AsyncSession, product_id: UUID, current_user: CurrentUser) -> Product:
+    if current_user.tenant_id is None:
+        raise ResourceNotFoundError("product", str(product_id))
+    p = (await db.execute(
+        select(Product).where(Product.id == product_id,
+                              Product.tenant_id == current_user.tenant_id)
+    )).scalar_one_or_none()
+    if p is None:
+        raise ResourceNotFoundError("product", str(product_id))
+    return p
+
+
+@router.post("/products", response_model=ProductResponse, status_code=201)
+async def create_product(
+    body: CreateProductRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProductResponse:
+    """Create a manual (non-IAM) product for the caller's tenant."""
+    target_tenant_id = ref_create_tenant_id(current_user)
+    require_ref_write(current_user, target_tenant_id)
+    if target_tenant_id is None:
+        raise ValidationError("A tenant must be selected to create a product")
+
+    slug = _slugify(body.slug or body.name)
+    if not slug:
+        raise ValidationError("Could not derive a valid slug")
+
+    product = Product(tenant_id=target_tenant_id, name=body.name, slug=slug,
+                      description=body.description, is_active=True, source="manual")
+    db.add(product)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise ValidationError(f"A product with slug '{slug}' already exists")
+    await db.refresh(product)
+    return ProductResponse.model_validate(product)
+
+
+@router.patch("/products/{product_id}", response_model=ProductResponse)
+async def update_product(
+    product_id: UUID,
+    body: UpdateProductRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProductResponse:
+    """Update a product's name/description/active flag (slug is immutable; IAM
+    rows may be edited but not deleted)."""
+    product = await _get_tenant_product(db, product_id, current_user)
+    require_ref_write(current_user, product.tenant_id)
+    for field_name, value in body.model_dump(exclude_unset=True).items():
+        setattr(product, field_name, value)
+    db.add(product)
+    await db.commit()
+    await db.refresh(product)
+    return ProductResponse.model_validate(product)
+
+
+@router.delete("/products/{product_id}", status_code=204)
+async def delete_product(
+    product_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a MANUAL product. IAM-sourced products cannot be deleted (they are
+    owned by the IAM sync). If the manual product is still referenced (tickets/
+    KB/assets), it is soft-deactivated instead of hard-deleted."""
+    product = await _get_tenant_product(db, product_id, current_user)
+    require_ref_write(current_user, product.tenant_id)
+    if product.source == "iam":
+        raise ValidationError("IAM-sourced products cannot be deleted; deactivate it instead")
+    try:
+        await db.delete(product)
+        await db.commit()
+    except IntegrityError:
+        # Still referenced by tickets/KB/assets — keep the row, just deactivate.
+        await db.rollback()
+        product.is_active = False
+        db.add(product)
+        await db.commit()
 
 
 # ---------------------------------------------------------------------------

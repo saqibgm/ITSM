@@ -92,6 +92,13 @@ class Product(Base, TimestampMixin):
     slug: Mapped[str] = mapped_column(sa.VARCHAR(100), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    # Origin: 'iam' rows are projected from IAM subscriptions (the sync owns them
+    # and they cannot be deleted); 'manual' rows are admin-created in ITSM and are
+    # fully editable/deletable. The IAM sync only ever touches 'iam' rows.
+    source: Mapped[str] = mapped_column(
+        sa.VARCHAR(20), nullable=False, default="manual",
+        server_default=sa.text("'manual'"),
+    )
 
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="products")
 
