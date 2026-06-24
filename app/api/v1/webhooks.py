@@ -19,7 +19,17 @@ Event routing
 "product.unsubscribed"    + product == "itsm"  → suspend tenant
 "organization.suspended"                        → suspend tenant
 "organization.reactivated"                      → unsuspend tenant
+"user.deactivated"/"user.suspended"/"user.deleted"/"member.removed"/"user.offboarded"
+                                                → deactivate the user's ITSM mirror now
+"user.reactivated"/"member.added"/"user.restored"
+                                                → reactivate the user's ITSM mirror
+"user.role_changed"/"user.updated"/"user.roles_changed" (+ roles[]) → refresh iam_roles
 unknown events                                  → 200 OK (forward-compatible)
+
+User-lifecycle events carry `user_id` (the IAM sub) and optional `org_id`/`roles`.
+They give *immediate* propagation; absent them, mirrors still refresh on next
+login. NOTE: this is the receiver — IAM/Keycloak must be configured to emit these
+events for them to fire.
 
 Tenant provisioning
 -------------------
@@ -49,7 +59,7 @@ from sqlalchemy.exc import IntegrityError
 from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.exceptions import AuthenticationError
-from app.models.identity import Tenant, TenantSequence
+from app.models.identity import Tenant, TenantSequence, User
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +269,56 @@ async def _set_tenant_active(org_id: str, *, is_active: bool) -> None:
     )
 
 
+async def _set_user_active(iam_user_id: str, org_id: str, *, is_active: bool) -> None:
+    """Activate/deactivate a user's ITSM mirror immediately on an IAM lifecycle
+    event (offboarding / suspension) — instead of waiting for the next login.
+
+    Scoped to the user's tenant (resolved from org_id) when provided; otherwise
+    applies to every tenant-mirror of that iam_user_id. No-op if the user has no
+    ITSM mirror yet (they never logged in)."""
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            q = select(User).where(User.iam_user_id == iam_user_id)
+            if org_id:
+                tenant = (await session.execute(
+                    select(Tenant).where(Tenant.iam_org_id == org_id)
+                )).scalar_one_or_none()
+                if tenant is not None:
+                    q = q.where(User.tenant_id == tenant.id)
+            users = (await session.execute(q)).scalars().all()
+            for u in users:
+                u.is_active = is_active
+    logger.info(
+        "webhook_user_active_set",
+        extra={"iam_user_id": iam_user_id, "org_id": org_id,
+               "is_active": is_active, "count": len(users)},
+    )
+
+
+async def _sync_user_roles(iam_user_id: str, org_id: str, roles: list) -> None:
+    """Refresh a user's mirrored iam_roles immediately on an IAM role change.
+
+    Only updates when the event payload carries the new role set; otherwise the
+    mirror is refreshed on the user's next login anyway."""
+    if not roles:
+        return
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            q = select(User).where(User.iam_user_id == iam_user_id)
+            if org_id:
+                tenant = (await session.execute(
+                    select(Tenant).where(Tenant.iam_org_id == org_id)
+                )).scalar_one_or_none()
+                if tenant is not None:
+                    q = q.where(User.tenant_id == tenant.id)
+            for u in (await session.execute(q)).scalars().all():
+                u.iam_roles = list(roles)
+    logger.info(
+        "webhook_user_roles_synced",
+        extra={"iam_user_id": iam_user_id, "org_id": org_id, "roles": roles},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Route
 # ---------------------------------------------------------------------------
@@ -295,6 +355,9 @@ async def iam_webhook(request: Request) -> JSONResponse:
     product: str = (payload.get("product") or "").lower()
     org_id: str = payload.get("org_id", "")
     org_name: str = payload.get("org_name", "") or org_id  # fallback to org_id if name absent
+    # User-lifecycle fields (present on user.* events)
+    user_id: str = payload.get("user_id") or payload.get("sub") or ""
+    user_roles: list = payload.get("roles") or []
 
     logger.info(
         "webhook_received",
@@ -318,6 +381,17 @@ async def iam_webhook(request: Request) -> JSONResponse:
 
         elif event == "organization.reactivated":
             await _set_tenant_active(org_id, is_active=True)
+
+        # ---- User lifecycle — immediate de/re-provisioning -------------------
+        elif event in ("user.deactivated", "user.suspended", "user.deleted",
+                       "member.removed", "user.offboarded") and user_id:
+            await _set_user_active(user_id, org_id, is_active=False)
+
+        elif event in ("user.reactivated", "member.added", "user.restored") and user_id:
+            await _set_user_active(user_id, org_id, is_active=True)
+
+        elif event in ("user.role_changed", "user.updated", "user.roles_changed") and user_id:
+            await _sync_user_roles(user_id, org_id, user_roles)
 
         else:
             # Unknown or irrelevant event — forward-compatible, silently ignore
