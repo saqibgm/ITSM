@@ -43,14 +43,16 @@ services:
       - redis
 
   db:
-    # DEV ONLY — not deployed in prod (use shared Project-IQ PostgreSQL server instead)
+    # DEV ONLY — not deployed in prod (use shared Project-IQ PostgreSQL server instead).
+    # Hosts both itsm_db and the bot's Chatbot DB; published on host 5432 for all
+    # local flows (dev + tests) so the port never flips.
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: itsm_user
       POSTGRES_PASSWORD: itsm_pass
       POSTGRES_DB: itsm_db
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
 

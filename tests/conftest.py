@@ -57,7 +57,7 @@ _TEST_PLATFORM_ORG_ID = "org_99technologies"
 
 TEST_DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://itsm:itsm@localhost:5433/itsm_test",
+    "postgresql+asyncpg://itsm:itsm@localhost:5432/itsm_test",
 )
 
 
