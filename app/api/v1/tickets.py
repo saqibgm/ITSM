@@ -388,6 +388,23 @@ async def get_ticket(
     )[0]
 
 
+@router.get("/{ticket_id}/transitions")
+async def get_ticket_transitions(
+    ticket_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Valid next statuses for this ticket per the state machine
+    (``ticket_status_transitions``). The UI uses this to offer only reachable
+    statuses, instead of every status — picking an unreachable one would 409
+    ("Cannot transition from X to Y")."""
+    tenant_id = _resolve_list_scope(current_user)
+    repo = TicketRepository(db)
+    ticket = await repo.get_or_404(ticket_id, tenant_id)
+    valid = await repo.get_valid_transitions(ticket.status, ticket.type)
+    return {"current": ticket.status.value, "valid": valid}
+
+
 # ---------------------------------------------------------------------------
 # PATCH /tickets/{ticket_id}
 # ---------------------------------------------------------------------------
