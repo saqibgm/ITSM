@@ -68,6 +68,7 @@ from app.models.ticket import (
 )
 from app.models.ticket_transitions import TicketStatusTransition
 from app.models.sla import (
+    AISLAPrediction,
     CoverageWindow,
     SLAAgreement,
     SLAAgreementKind,
@@ -102,6 +103,7 @@ __all__ = [
     "PlatformAuditLog",
     "TenantSequence",
     # SLM (Phase 7 / S7.1)
+    "AISLAPrediction",
     "CoverageWindow",
     "SLAAgreement",
     "SLAAgreementKind",

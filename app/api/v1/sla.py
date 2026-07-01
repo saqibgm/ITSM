@@ -18,11 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import CurrentUser, require_role
 from app.database import get_db
 from app.exceptions import AuthorizationError, ResourceNotFoundError, ValidationError
+import csv
+import io
 from datetime import date, timedelta
 
+from fastapi.responses import StreamingResponse
+
 from app.models.sla import (
-    CoverageWindow, SLAAgreement, SLAAgreementKind, SLAInstance, SLAMetric,
-    SLAMetricsDaily, SLARule, SLATarget, SLAUnderpinning,
+    AISLAPrediction, CoverageWindow, SLAAgreement, SLAAgreementKind, SLAInstance,
+    SLAMetric, SLAMetricsDaily, SLARule, SLATarget, SLAUnderpinning,
 )
 from app.models.ticket import Ticket
 from app.services import slm_service
@@ -697,6 +701,83 @@ async def report_compliance(
             for r in rows
         ],
     }
+
+
+@router.get("/predictions")
+async def report_predictions(
+    min_risk: float = 0.0,
+    cu: CurrentUser = Depends(require_role(*_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Latest breach-risk prediction per still-running instance, risk-desc."""
+    tid = _tenant(cu)
+    # Newest prediction per instance (by created_at), still-running instances only.
+    latest = (
+        select(
+            AISLAPrediction.instance_id,
+            func.max(AISLAPrediction.created_at).label("mx"),
+        )
+        .where(AISLAPrediction.tenant_id == tid)
+        .group_by(AISLAPrediction.instance_id)
+    ).subquery()
+    rows = (await db.execute(
+        select(AISLAPrediction, SLATarget.metric, Ticket.ticket_number)
+        .join(latest, (latest.c.instance_id == AISLAPrediction.instance_id)
+              & (latest.c.mx == AISLAPrediction.created_at))
+        .join(SLAInstance, SLAInstance.id == AISLAPrediction.instance_id)
+        .join(SLATarget, SLATarget.id == SLAInstance.target_id)
+        .join(Ticket, Ticket.id == AISLAPrediction.ticket_id)
+        .where(SLAInstance.status == "running", AISLAPrediction.breach_risk >= min_risk)
+        .order_by(AISLAPrediction.breach_risk.desc())
+    )).all()
+    return {"items": [
+        {
+            "instance_id": str(pred.instance_id), "ticket_id": str(pred.ticket_id),
+            "ticket_number": ticket_number, "metric": metric,
+            "breach_risk": pred.breach_risk, "reason": pred.reason,
+            "model_version": pred.model_version, "flagged": pred.breach_risk >= 0.7,
+        }
+        for pred, metric, ticket_number in rows
+    ]}
+
+
+@router.get("/reports/export")
+async def report_export(
+    report: str = "breaches",
+    cu: CurrentUser = Depends(require_role(*_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """CSV export of the breaches or compliance report (dependency-free)."""
+    tid = _tenant(cu)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    if report == "compliance":
+        w.writerow(["date", "opened", "met", "breached"])
+        rows = (await db.execute(
+            select(SLAMetricsDaily).where(SLAMetricsDaily.tenant_id == tid)
+            .order_by(SLAMetricsDaily.date)
+        )).scalars().all()
+        for r in rows:
+            w.writerow([r.date.isoformat(), r.opened_count, r.met_count, r.breached_count])
+    else:  # breaches
+        w.writerow(["ticket_number", "metric", "breached_at", "attributed_kind", "attributed_id"])
+        rows = (await db.execute(
+            select(SLAInstance, SLATarget.metric, Ticket.ticket_number)
+            .join(SLATarget, SLATarget.id == SLAInstance.target_id)
+            .join(Ticket, Ticket.id == SLAInstance.ticket_id)
+            .where(SLAInstance.tenant_id == tid, SLAInstance.status == "breached")
+            .order_by(SLAInstance.breached_at.desc())
+        )).all()
+        for inst, metric, ticket_number in rows:
+            ap = inst.attributed_party or {}
+            w.writerow([ticket_number, metric,
+                        inst.breached_at.isoformat() if inst.breached_at else "",
+                        ap.get("kind", ""), ap.get("id", "")])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="sla-{report}.csv"'},
+    )
 
 
 @router.get("/reports/overview")

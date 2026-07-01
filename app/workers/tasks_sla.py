@@ -241,6 +241,16 @@ async def _async_scan_sla_instances() -> None:
             for inst in due:
                 await sla_runtime.attribute_breach(db, inst)
 
+            # --- HITL ground truth: mark predictions for breached instances ---
+            if due:
+                from app.models.sla import AISLAPrediction
+                from sqlalchemy import update as _update
+                await db.execute(
+                    _update(AISLAPrediction)
+                    .where(AISLAPrediction.instance_id.in_([i.id for i in due]))
+                    .values(actual_breached=True)
+                )
+
             await db.commit()
     finally:
         await engine.dispose()
@@ -293,6 +303,40 @@ async def _async_flush_sla_metrics_daily() -> None:
     finally:
         await engine.dispose()
     logger.info("sla_metrics_flushed")
+
+
+@celery_app.task(
+    name="app.workers.tasks_sla.predict_sla_breaches",
+    bind=True, max_retries=3, default_retry_delay=30,
+)
+def predict_sla_breaches(self) -> None:
+    """Score open SLA instances for breach risk (Phase 7 / S7.3 tail)."""
+    import asyncio
+    try:
+        asyncio.run(_async_predict_sla_breaches())
+    except Exception as exc:
+        logger.error("sla_predict_failed",
+                     extra={"attempt": self.request.retries + 1, "error": str(exc)})
+        raise self.retry(exc=exc)
+
+
+async def _async_predict_sla_breaches() -> None:
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.config import get_settings
+    from app.services.sla_prediction import score_open_instances
+
+    settings = get_settings()
+    engine = create_async_engine(settings.DATABASE_URL, pool_size=2, max_overflow=1)
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with async_session() as db:
+            n = await score_open_instances(db)
+            await db.commit()
+        logger.info("sla_predictions_scored", extra={"count": n})
+    finally:
+        await engine.dispose()
 
 
 def _enqueue_breach_notifications(

@@ -167,6 +167,57 @@ async def test_pause_and_resume_pushes_due(tenant_admin_client, agent_client, db
 
 
 # ---------------------------------------------------------------------------
+# Breach prediction (S7.3 tail) + CSV export
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_breach_prediction_flags_high_consumption(tenant_admin_client, agent_client, db, test_tenant_id):
+    from datetime import timedelta
+    from uuid import UUID
+    from app.services.sla_prediction import score_open_instances
+
+    ag = await _make_agreement_with_target(tenant_admin_client, "Predict SLA")
+    target_id = (await tenant_admin_client.get(
+        f"/api/v1/sla/agreements/{ag['id']}")).json()["targets"][0]["id"]
+    ticket_id = await _make_ticket(agent_client)
+    tid, ttid = UUID(str(test_tenant_id)), UUID(str(ticket_id))
+    now = datetime.now(timezone.utc)
+    # 3h elapsed of a 4h budget → 75% consumed → risk 0.75 → flagged
+    db.add(SLAInstance(tenant_id=tid, ticket_id=ttid, target_id=UUID(target_id),
+                       agreement_version=1, created_at=now - timedelta(hours=3),
+                       due_at=now + timedelta(hours=1), status="running"))
+    await db.commit()
+
+    n = await score_open_instances(db)
+    await db.commit()
+    assert n >= 1
+
+    r = await agent_client.get("/api/v1/sla/predictions?min_risk=0.5")
+    assert r.status_code == 200, r.text
+    assert any(i["ticket_id"] == ticket_id and i["flagged"] for i in r.json()["items"])
+
+
+@pytest.mark.asyncio
+async def test_csv_export_breaches(tenant_admin_client, agent_client, db, test_tenant_id):
+    from uuid import UUID
+    ag = await _make_agreement_with_target(tenant_admin_client, "Export SLA")
+    target_id = (await tenant_admin_client.get(
+        f"/api/v1/sla/agreements/{ag['id']}")).json()["targets"][0]["id"]
+    ticket_id = await _make_ticket(agent_client)
+    tid, ttid = UUID(str(test_tenant_id)), UUID(str(ticket_id))
+    db.add(SLAInstance(tenant_id=tid, ticket_id=ttid, target_id=UUID(target_id),
+                       agreement_version=1, due_at=_dt(2026, 1, 1, 0),
+                       status="breached", breached_at=datetime.now(timezone.utc)))
+    await db.commit()
+
+    r = await agent_client.get("/api/v1/sla/reports/export?report=breaches")
+    assert r.status_code == 200
+    assert "text/csv" in r.headers["content-type"]
+    assert "ticket_number" in r.text
+
+
+# ---------------------------------------------------------------------------
 # Breach attribution via OLA underpinning
 # ---------------------------------------------------------------------------
 

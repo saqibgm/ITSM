@@ -36,6 +36,10 @@ def create_celery() -> Celery:
             "task": "app.workers.tasks_sla.flush_sla_metrics_daily",
             "schedule": crontab(hour=2, minute=45),  # nightly rollup
         },
+        "sla-breach-predict": {
+            "task": "app.workers.tasks_sla.predict_sla_breaches",
+            "schedule": 300.0,  # every 5 minutes — breach-risk scoring
+        },
         "iam-user-sync": {
             "task": "app.workers.tasks_iam_sync.sync_all_tenants",
             "schedule": 900.0,  # every 15 minutes

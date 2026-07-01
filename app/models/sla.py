@@ -311,6 +311,36 @@ class SLAMetricsDaily(Base):
     )
 
 
+class AISLAPrediction(Base):
+    """Breach-risk prediction for an open SLA instance (S7.3), with HITL ground
+    truth (``actual_breached``) for later model tuning — mirrors the
+    ai_ticket_classifications pattern. Append-only; latest row per instance wins.
+    """
+
+    __tablename__ = "ai_sla_predictions"
+
+    id: Mapped[UUID] = mapped_column(sa.UUID(as_uuid=True), primary_key=True, default=uuid7)
+    tenant_id: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    ticket_id: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True), sa.ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False,
+    )
+    instance_id: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True), sa.ForeignKey("sla_instances.id", ondelete="CASCADE"), nullable=False,
+    )
+    breach_risk: Mapped[float] = mapped_column(sa.Float, nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    model_version: Mapped[str] = mapped_column(sa.VARCHAR(40), nullable=False, server_default=sa.text("'heuristic-v1'"))
+    actual_breached: Mapped[Optional[bool]] = mapped_column(sa.Boolean, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.func.now())
+
+    __table_args__ = (
+        sa.Index("ix_ai_sla_predictions_instance", "instance_id"),
+        sa.Index("ix_ai_sla_predictions_tenant_created", "tenant_id", "created_at"),
+    )
+
+
 class SLAEvent(Base):
     """Immutable (INSERT-only) clock event log for an instance."""
 
