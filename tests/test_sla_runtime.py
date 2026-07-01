@@ -171,6 +171,43 @@ async def test_pause_and_resume_pushes_due(tenant_admin_client, agent_client, db
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Reporting (S7.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_report_at_risk_lists_soon_due(tenant_admin_client, agent_client):
+    ag = await _make_agreement_with_target(tenant_admin_client, "AtRisk SLA", minutes=5)
+    await tenant_admin_client.post("/api/v1/sla/rules", json={"agreement_id": ag["id"], "conditions": {}})
+    ticket_id = await _make_ticket(agent_client)  # auto-opens an instance due in ~5 min
+    r = await agent_client.get("/api/v1/sla/reports/at-risk?window_minutes=60")
+    assert r.status_code == 200
+    assert any(i["ticket_id"] == ticket_id and i["ticket_number"] for i in r.json()["items"])
+
+
+@pytest.mark.asyncio
+async def test_report_breaches_and_overview(tenant_admin_client, agent_client, db, test_tenant_id):
+    ag = await _make_agreement_with_target(tenant_admin_client, "Breach SLA")
+    target_id = (await tenant_admin_client.get(
+        f"/api/v1/sla/agreements/{ag['id']}")).json()["targets"][0]["id"]
+    ticket_id = await _make_ticket(agent_client)
+    from uuid import UUID
+    tid, ttid = UUID(str(test_tenant_id)), UUID(str(ticket_id))
+    db.add(SLAInstance(tenant_id=tid, ticket_id=ttid, target_id=UUID(target_id),
+                       agreement_version=1, due_at=_dt(2026, 1, 1, 0),
+                       status="breached", breached_at=_dt(2026, 1, 1, 0)))
+    await db.commit()
+
+    b = await agent_client.get("/api/v1/sla/reports/breaches")
+    assert b.status_code == 200
+    assert any(i["ticket_id"] == ticket_id for i in b.json()["items"])
+
+    o = await agent_client.get("/api/v1/sla/reports/overview")
+    assert o.status_code == 200
+    assert o.json()["breached"] >= 1
+
+
 @pytest.mark.asyncio
 async def test_breach_attribution_to_ola_team(tenant_admin_client, agent_client, db, test_tenant_id):
     # A team to own the OLA

@@ -19,9 +19,10 @@ from app.auth.dependencies import CurrentUser, require_role
 from app.database import get_db
 from app.exceptions import AuthorizationError, ResourceNotFoundError, ValidationError
 from app.models.sla import (
-    CoverageWindow, SLAAgreement, SLAAgreementKind, SLAMetric, SLARule,
-    SLATarget, SLAUnderpinning,
+    CoverageWindow, SLAAgreement, SLAAgreementKind, SLAInstance, SLAMetric,
+    SLARule, SLATarget, SLAUnderpinning,
 )
+from app.models.ticket import Ticket
 from app.services import slm_service
 
 router = APIRouter(prefix="/sla", tags=["sla"])
@@ -585,3 +586,98 @@ async def match_preview(
         select(SLARule).where(SLARule.tenant_id == tid).order_by(SLARule.position)
     )).scalars().all()
     return slm_service.match_explanation(list(rules), body.conditions)
+
+
+# ---------------------------------------------------------------------------
+# Reporting (Phase 7 / S7.3) — reads sla_instances
+# ---------------------------------------------------------------------------
+
+
+@router.get("/reports/at-risk")
+async def report_at_risk(
+    window_minutes: int = 60,
+    cu: CurrentUser = Depends(require_role(*_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Live board: running (not paused) clocks already overdue or due within the
+    window, soonest first. Powers the "at-risk" operator view."""
+    tid = _tenant(cu)
+    cutoff = func.now() + func.make_interval(0, 0, 0, 0, 0, window_minutes, 0)
+    rows = (await db.execute(
+        select(
+            SLAInstance, SLATarget.metric, Ticket.ticket_number,
+            func.extract("epoch", SLAInstance.due_at - func.now()).label("remaining_sec"),
+        )
+        .join(SLATarget, SLATarget.id == SLAInstance.target_id)
+        .join(Ticket, Ticket.id == SLAInstance.ticket_id)
+        .where(
+            SLAInstance.tenant_id == tid,
+            SLAInstance.status == "running",
+            SLAInstance.paused_at.is_(None),
+            SLAInstance.due_at <= cutoff,
+        )
+        .order_by(SLAInstance.due_at.asc())
+    )).all()
+    return {"items": [
+        {
+            "instance_id": str(inst.id),
+            "ticket_id": str(inst.ticket_id),
+            "ticket_number": ticket_number,
+            "metric": metric,
+            "due_at": inst.due_at.isoformat() if inst.due_at else None,
+            "remaining_seconds": float(remaining_sec) if remaining_sec is not None else None,
+        }
+        for inst, metric, ticket_number, remaining_sec in rows
+    ]}
+
+
+@router.get("/reports/breaches")
+async def report_breaches(
+    cu: CurrentUser = Depends(require_role(*_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Breached instances with attributed party (team/vendor via OLA/UC chain)."""
+    tid = _tenant(cu)
+    rows = (await db.execute(
+        select(SLAInstance, SLATarget.metric, Ticket.ticket_number)
+        .join(SLATarget, SLATarget.id == SLAInstance.target_id)
+        .join(Ticket, Ticket.id == SLAInstance.ticket_id)
+        .where(SLAInstance.tenant_id == tid, SLAInstance.status == "breached")
+        .order_by(SLAInstance.breached_at.desc())
+    )).all()
+    return {"items": [
+        {
+            "instance_id": str(inst.id),
+            "ticket_id": str(inst.ticket_id),
+            "ticket_number": ticket_number,
+            "metric": metric,
+            "breached_at": inst.breached_at.isoformat() if inst.breached_at else None,
+            "attributed_party": inst.attributed_party,
+        }
+        for inst, metric, ticket_number in rows
+    ]}
+
+
+@router.get("/reports/overview")
+async def report_overview(
+    cu: CurrentUser = Depends(require_role(*_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Instance counts by status + a simple compliance % (met / terminal)."""
+    tid = _tenant(cu)
+    rows = (await db.execute(
+        select(SLAInstance.status, func.count())
+        .where(SLAInstance.tenant_id == tid)
+        .group_by(SLAInstance.status)
+    )).all()
+    counts = {status: int(n) for status, n in rows}
+    met = counts.get("met", 0)
+    breached = counts.get("breached", 0)
+    terminal = met + breached
+    compliance_pct = round(met / terminal * 100, 1) if terminal else None
+    return {
+        "counts": counts,
+        "breached": breached,
+        "at_risk": counts.get("running", 0),
+        "compliance_pct": compliance_pct,
+    }
