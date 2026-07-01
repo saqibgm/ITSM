@@ -67,6 +67,15 @@ from app.models.ticket import (
     TicketWatcher,
 )
 from app.models.ticket_transitions import TicketStatusTransition
+from app.models.sla import (
+    CoverageWindow,
+    SLAAgreement,
+    SLAAgreementKind,
+    SLAMetric,
+    SLARule,
+    SLATarget,
+    SLAUnderpinning,
+)
 from app.models.virtual_agent import VirtualAgentMessage, VirtualAgentSession
 from app.models.webhook import WebhookDelivery, WebhookEndpoint
 
@@ -87,6 +96,14 @@ __all__ = [
     "TeamMember",
     "PlatformAuditLog",
     "TenantSequence",
+    # SLM (Phase 7 / S7.1)
+    "CoverageWindow",
+    "SLAAgreement",
+    "SLAAgreementKind",
+    "SLAMetric",
+    "SLARule",
+    "SLATarget",
+    "SLAUnderpinning",
     # ticket state machine
     "TicketStatusTransition",
     # ticketing
