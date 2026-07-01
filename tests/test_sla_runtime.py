@@ -209,6 +209,34 @@ async def test_report_breaches_and_overview(tenant_admin_client, agent_client, d
 
 
 @pytest.mark.asyncio
+async def test_metrics_rollup_and_compliance(tenant_admin_client, agent_client, db, test_tenant_id):
+    from datetime import date
+    from sqlalchemy import func
+    from app.services.sla_metrics import compute_sla_metrics_for_date
+
+    ag = await _make_agreement_with_target(tenant_admin_client, "Metrics SLA")
+    await tenant_admin_client.post("/api/v1/sla/rules", json={"agreement_id": ag["id"], "conditions": {}})
+    ticket_id = await _make_ticket(agent_client)  # auto-opens an instance today
+    target_id = (await tenant_admin_client.get(
+        f"/api/v1/sla/agreements/{ag['id']}")).json()["targets"][0]["id"]
+    from uuid import UUID
+    tid, ttid = UUID(str(test_tenant_id)), UUID(str(ticket_id))
+    db.add(SLAInstance(tenant_id=tid, ticket_id=ttid, target_id=UUID(target_id),
+                       agreement_version=1, due_at=_dt(2026, 1, 1, 0),
+                       status="breached", breached_at=datetime.now(timezone.utc)))
+    await db.commit()
+
+    await compute_sla_metrics_for_date(db, date.today())
+    await db.commit()
+
+    r = await agent_client.get("/api/v1/sla/reports/compliance")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["opened"] >= 1 and body["breached"] >= 1
+    assert body["series"]  # at least one day
+
+
+@pytest.mark.asyncio
 async def test_breach_attribution_to_ola_team(tenant_admin_client, agent_client, db, test_tenant_id):
     # A team to own the OLA
     team = (await tenant_admin_client.post("/api/v1/tenant/teams", json={"name": "Infra Team"})).json()

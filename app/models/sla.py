@@ -15,7 +15,7 @@ avoids native-PG-enum migration friction.
 """
 
 import enum
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
 
@@ -278,6 +278,36 @@ class SLAInstance(Base, TimestampMixin):
     __table_args__ = (
         sa.Index("ix_sla_instances_tenant_status_due", "tenant_id", "status", "due_at"),
         sa.Index("ix_sla_instances_ticket", "ticket_id"),
+    )
+
+
+class SLAMetricsDaily(Base):
+    """Nightly per-tenant rollup for fast SLA dashboards (S7.3).
+
+    ``dimension`` is a JSONB group key ({} = whole tenant; future: {team_id}/
+    {priority}). Percentile columns are reserved (nullable) for when met-time
+    tracking lands; S7.3 populates the counts.
+    """
+
+    __tablename__ = "sla_metrics_daily"
+
+    id: Mapped[UUID] = mapped_column(sa.UUID(as_uuid=True), primary_key=True, default=uuid7)
+    tenant_id: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    date: Mapped[date] = mapped_column(sa.Date, nullable=False)
+    dimension: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=sa.text("'{}'::jsonb"))
+    opened_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
+    met_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
+    breached_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
+    total_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
+    p50_resolve_min: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
+    p90_resolve_min: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
+    p95_resolve_min: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
+    p99_resolve_min: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
+
+    __table_args__ = (
+        sa.UniqueConstraint("tenant_id", "date", "dimension", name="uq_sla_metrics_daily"),
     )
 
 

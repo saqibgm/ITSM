@@ -251,6 +251,50 @@ async def _async_scan_sla_instances() -> None:
         logger.debug("sla_instance_scan_clean")
 
 
+@celery_app.task(
+    name="app.workers.tasks_sla.flush_sla_metrics_daily",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def flush_sla_metrics_daily(self) -> None:
+    """Nightly per-tenant SLA rollup into sla_metrics_daily (Phase 7 / S7.3).
+
+    Recomputes yesterday AND today (today is partial but keeps the live dashboard
+    fresh; the idempotent upsert makes re-runs safe)."""
+    import asyncio
+
+    try:
+        asyncio.run(_async_flush_sla_metrics_daily())
+    except Exception as exc:
+        logger.error("sla_metrics_flush_failed",
+                     extra={"attempt": self.request.retries + 1, "error": str(exc)})
+        raise self.retry(exc=exc)
+
+
+async def _async_flush_sla_metrics_daily() -> None:
+    from datetime import date, timedelta
+
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.config import get_settings
+    from app.services.sla_metrics import compute_sla_metrics_for_date
+
+    settings = get_settings()
+    engine = create_async_engine(settings.DATABASE_URL, pool_size=2, max_overflow=1)
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    today = date.today()
+    try:
+        async with async_session() as db:
+            for d in (today - timedelta(days=1), today):
+                await compute_sla_metrics_for_date(db, d)
+            await db.commit()
+    finally:
+        await engine.dispose()
+    logger.info("sla_metrics_flushed")
+
+
 def _enqueue_breach_notifications(
     *,
     tenant_id: UUID,

@@ -18,9 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import CurrentUser, require_role
 from app.database import get_db
 from app.exceptions import AuthorizationError, ResourceNotFoundError, ValidationError
+from datetime import date, timedelta
+
 from app.models.sla import (
     CoverageWindow, SLAAgreement, SLAAgreementKind, SLAInstance, SLAMetric,
-    SLARule, SLATarget, SLAUnderpinning,
+    SLAMetricsDaily, SLARule, SLATarget, SLAUnderpinning,
 )
 from app.models.ticket import Ticket
 from app.services import slm_service
@@ -656,6 +658,45 @@ async def report_breaches(
         }
         for inst, metric, ticket_number in rows
     ]}
+
+
+@router.get("/reports/compliance")
+async def report_compliance(
+    from_date: date | None = None,
+    to_date: date | None = None,
+    cu: CurrentUser = Depends(require_role(*_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compliance over a date range from the nightly sla_metrics_daily rollup.
+
+    Defaults to the last 30 days. Returns totals + a per-day series.
+    """
+    tid = _tenant(cu)
+    to_d = to_date or date.today()
+    from_d = from_date or (to_d - timedelta(days=30))
+    rows = (await db.execute(
+        select(SLAMetricsDaily)
+        .where(
+            SLAMetricsDaily.tenant_id == tid,
+            SLAMetricsDaily.date >= from_d,
+            SLAMetricsDaily.date <= to_d,
+        )
+        .order_by(SLAMetricsDaily.date)
+    )).scalars().all()
+    met = sum(r.met_count for r in rows)
+    breached = sum(r.breached_count for r in rows)
+    opened = sum(r.opened_count for r in rows)
+    terminal = met + breached
+    return {
+        "from": from_d.isoformat(), "to": to_d.isoformat(),
+        "met": met, "breached": breached, "opened": opened,
+        "compliance_pct": round(met / terminal * 100, 1) if terminal else None,
+        "series": [
+            {"date": r.date.isoformat(), "opened": r.opened_count,
+             "met": r.met_count, "breached": r.breached_count}
+            for r in rows
+        ],
+    }
 
 
 @router.get("/reports/overview")
