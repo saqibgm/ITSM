@@ -28,6 +28,10 @@ def create_celery() -> Celery:
             "task": "app.workers.tasks_sla.check_sla_breaches",
             "schedule": 300.0,  # every 5 minutes
         },
+        "sla-instance-scan": {
+            "task": "app.workers.tasks_sla.scan_sla_instances",
+            "schedule": 300.0,  # every 5 minutes — warnings + breaches over sla_instances
+        },
         "iam-user-sync": {
             "task": "app.workers.tasks_iam_sync.sync_all_tenants",
             "schedule": 900.0,  # every 15 minutes

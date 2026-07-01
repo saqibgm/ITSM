@@ -8,10 +8,75 @@ target (the §10 parity tweak).
 
 from __future__ import annotations
 
+from datetime import date, datetime, time, timedelta
 from typing import Any, Iterable, Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from app.models.sla import METRIC_DEFAULT_EVENTS
+
+
+def _parse_hhmm(value: str) -> time:
+    h, m = value.split(":")
+    return time(int(h), int(m))
+
+
+def add_working_minutes_cw(start: datetime, minutes: int, cw: Any | None) -> datetime:
+    """Advance ``start`` by ``minutes`` of working time over a CoverageWindow.
+
+    Generalises the business-hours math to a coverage window that may be 24x7,
+    or carry multiple daily windows (split shifts). ``cw is None`` or ``is_247``
+    → plain wall-clock addition. All inputs/outputs are timezone-aware UTC-safe;
+    intermediate math is done in the window's timezone. Never calls now().
+    """
+    if minutes <= 0:
+        return start
+    if cw is None or getattr(cw, "is_247", False) or not (cw.windows or []):
+        return start + timedelta(minutes=minutes)
+
+    tz = ZoneInfo(cw.timezone or "UTC")
+    current = (start.replace(tzinfo=ZoneInfo("UTC")) if start.tzinfo is None else start).astimezone(tz)
+
+    work_days: set[int] = set(cw.work_days or [1, 2, 3, 4, 5])
+    holidays: set[date] = set(cw.holidays or [])
+    # Sorted (start, end) time pairs for a working day.
+    slots = sorted(
+        (_parse_hhmm(w["start"]), _parse_hhmm(w["end"]))
+        for w in (cw.windows or [])
+    )
+
+    remaining = minutes
+    guard = 0
+    while remaining > 0:
+        guard += 1
+        if guard > 100000:  # safety: never spin forever on a misconfigured window
+            return current
+        if current.isoweekday() not in work_days or current.date() in holidays:
+            current = (current + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            continue
+        advanced = False
+        for s, e in slots:
+            slot_start = current.replace(hour=s.hour, minute=s.minute, second=0, microsecond=0)
+            slot_end = current.replace(hour=e.hour, minute=e.minute, second=0, microsecond=0)
+            if current >= slot_end:
+                continue
+            if current < slot_start:
+                current = slot_start
+            avail = int((slot_end - current).total_seconds() // 60)
+            if remaining <= avail:
+                current = current + timedelta(minutes=remaining)
+                remaining = 0
+                advanced = True
+                break
+            remaining -= avail
+            current = slot_end
+            advanced = True
+        if remaining > 0 and (not advanced or current >= current.replace(
+                hour=slots[-1][1].hour, minute=slots[-1][1].minute, second=0, microsecond=0)):
+            # Past the last slot for today — jump to the next day.
+            current = (current + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    return current.astimezone(ZoneInfo("UTC"))
 
 # Condition keys an sla_rule may constrain on. A rule matches when EVERY key it
 # specifies (non-null) equals the ticket's corresponding attribute. `tag` matches

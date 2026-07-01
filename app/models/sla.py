@@ -49,6 +49,26 @@ class SLAMetric(str, enum.Enum):
     resolution = "resolution"
 
 
+class SLAInstanceStatus(str, enum.Enum):
+    running = "running"
+    paused = "paused"
+    met = "met"
+    breached = "breached"
+    stopped = "stopped"
+    cancelled = "cancelled"
+
+
+class SLAEventType(str, enum.Enum):
+    started = "started"
+    paused = "paused"
+    resumed = "resumed"
+    warned = "warned"
+    breached = "breached"
+    met = "met"
+    stopped = "stopped"
+    cancelled = "cancelled"
+
+
 # Default (start_event, stop_event) per metric — used when a target does not
 # override them. The §10 parity tweak lets a target set these explicitly.
 METRIC_DEFAULT_EVENTS: dict[str, tuple[str, str]] = {
@@ -220,4 +240,60 @@ class SLARule(Base, TimestampMixin):
 
     __table_args__ = (
         sa.Index("ix_sla_rules_tenant_position", "tenant_id", "position"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# SLAInstance — a target's clock attached to a specific ticket (S7.2)
+# ---------------------------------------------------------------------------
+
+
+class SLAInstance(Base, TimestampMixin):
+    """One target's clock on one ticket. ``agreement_version`` is frozen at open
+    time so editing the agreement never causes retroactive breach."""
+
+    __tablename__ = "sla_instances"
+
+    id: Mapped[UUID] = mapped_column(sa.UUID(as_uuid=True), primary_key=True, default=uuid7)
+    tenant_id: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    ticket_id: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True), sa.ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False,
+    )
+    target_id: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True), sa.ForeignKey("sla_targets.id", ondelete="CASCADE"), nullable=False,
+    )
+    agreement_version: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("1"))
+    due_at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False)
+    paused_at: Mapped[Optional[datetime]] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=True)
+    paused_duration_sec: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
+    pause_reason: Mapped[Optional[str]] = mapped_column(sa.VARCHAR(60), nullable=True)
+    status: Mapped[str] = mapped_column(sa.VARCHAR(20), nullable=False, server_default=sa.text("'running'"))
+    breached_at: Mapped[Optional[datetime]] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=True)
+    attributed_party: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Warn thresholds (%) already fired — prevents duplicate warnings.
+    warned_pct: Mapped[list[int]] = mapped_column(ARRAY(sa.Integer), nullable=False, server_default=sa.text("'{}'"))
+
+    __table_args__ = (
+        sa.Index("ix_sla_instances_tenant_status_due", "tenant_id", "status", "due_at"),
+        sa.Index("ix_sla_instances_ticket", "ticket_id"),
+    )
+
+
+class SLAEvent(Base):
+    """Immutable (INSERT-only) clock event log for an instance."""
+
+    __tablename__ = "sla_events"
+
+    id: Mapped[UUID] = mapped_column(sa.UUID(as_uuid=True), primary_key=True, default=uuid7)
+    instance_id: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True), sa.ForeignKey("sla_instances.id", ondelete="CASCADE"), nullable=False,
+    )
+    event: Mapped[str] = mapped_column(sa.VARCHAR(20), nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(sa.VARCHAR(255), nullable=True)
+    at: Mapped[datetime] = mapped_column(sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.func.now())
+
+    __table_args__ = (
+        sa.Index("ix_sla_events_instance_at", "instance_id", "at"),
     )

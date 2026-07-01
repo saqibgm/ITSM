@@ -159,6 +159,98 @@ async def _async_check_sla_breaches() -> None:
         logger.debug("sla_breach_check_no_breaches")
 
 
+@celery_app.task(
+    name="app.workers.tasks_sla.scan_sla_instances",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=30,
+)
+def scan_sla_instances(self) -> None:
+    """Warn + breach detection over ``sla_instances`` (Phase 7 / S7.2).
+
+    Runs entirely on DB server NOW(). Skips paused instances. Fires warn events
+    at each configured threshold %, marks breaches, and attributes them via the
+    OLA/UC underpinning chain. Additive to ``check_sla_breaches`` (which keeps
+    the ticket ``sla_*`` cache for tickets without instances yet).
+    """
+    import asyncio
+
+    try:
+        asyncio.run(_async_scan_sla_instances())
+    except Exception as exc:
+        logger.error("sla_instance_scan_failed",
+                     extra={"attempt": self.request.retries + 1, "error": str(exc)})
+        raise self.retry(exc=exc)
+
+
+async def _async_scan_sla_instances() -> None:
+    from sqlalchemy import func, text
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.config import get_settings
+    from app.models.sla import SLAEvent, SLAInstance, SLATarget
+    from app.services import sla_runtime
+
+    settings = get_settings()
+    engine = create_async_engine(settings.DATABASE_URL, pool_size=5, max_overflow=2)
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    warned = breached = 0
+    try:
+        async with async_session() as db:
+            # Platform-worker connection sees all tenants (RLS fail-open when the
+            # GUC is unset), which is what we want for a global scan.
+            # --- Warnings: crossed threshold % not yet in warned_pct ---
+            running = (await db.execute(
+                select(
+                    SLAInstance, SLATarget.warn_thresholds_pct,
+                    func.extract("epoch", func.now() - SLAInstance.created_at).label("elapsed"),
+                    func.extract("epoch", SLAInstance.due_at - SLAInstance.created_at).label("total"),
+                )
+                .join(SLATarget, SLATarget.id == SLAInstance.target_id)
+                .where(SLAInstance.status == "running", SLAInstance.paused_at.is_(None))
+            )).all()
+            for inst, thresholds, elapsed, total in running:
+                if not total or total <= 0:
+                    continue
+                pct = float(elapsed) / float(total) * 100.0
+                already = set(inst.warned_pct or [])
+                to_fire = sorted(t for t in (thresholds or []) if pct >= t and t not in already)
+                for t in to_fire:
+                    db.add(SLAEvent(instance_id=inst.id, event="warned", reason=f"{t}% consumed"))
+                    inst.warned_pct = list(already | {t})
+                    warned += 1
+
+            # --- Breaches: running + not paused + due_at < now() ---
+            due = (await db.execute(
+                select(SLAInstance).where(
+                    SLAInstance.status == "running",
+                    SLAInstance.paused_at.is_(None),
+                    SLAInstance.due_at < func.now(),
+                )
+            )).scalars().all()
+            for inst in due:
+                inst.status = "breached"
+                inst.breached_at = func.now()
+                db.add(SLAEvent(instance_id=inst.id, event="breached"))
+                breached += 1
+            await db.flush()
+
+            # --- Attribution pass (after all breaches marked) ---
+            for inst in due:
+                await sla_runtime.attribute_breach(db, inst)
+
+            await db.commit()
+    finally:
+        await engine.dispose()
+
+    if warned or breached:
+        logger.info("sla_instance_scan", extra={"warned": warned, "breached": breached})
+    else:
+        logger.debug("sla_instance_scan_clean")
+
+
 def _enqueue_breach_notifications(
     *,
     tenant_id: UUID,

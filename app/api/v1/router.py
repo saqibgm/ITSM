@@ -21,6 +21,7 @@ from app.api.v1.webhooks import router as webhooks_router
 from app.api.v1.webhooks_outbound import router as webhooks_outbound_router
 from app.api.v1.integrations import router as integrations_router
 from app.api.v1.sla import router as sla_router
+from app.api.v1.sla_tickets import router as sla_tickets_router
 
 router = APIRouter()
 
@@ -74,3 +75,6 @@ router.include_router(integrations_router)
 # SLM — SLA/OLA/UC agreements, targets, rules, coverage windows (Phase 7 / S7.1)
 # /api/v1/sla/...
 router.include_router(sla_router)
+
+# Per-ticket SLA runtime (Phase 7 / S7.2) — /api/v1/tickets/{id}/sla[...]
+router.include_router(sla_tickets_router)
