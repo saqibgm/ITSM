@@ -1,5 +1,6 @@
 """Ticket business logic — state machine, SLA, idempotency."""
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.exceptions import DuplicateIdempotencyKeyError, InvalidStateTransitionError
 from app.models.ticket import Ticket, TicketPriority, TicketStatus, TicketType
 from app.repositories.ticket_repo import TicketRepository
+
+logger = logging.getLogger(__name__)
 
 _IDEMPOTENCY_TTL = 86_400  # 24 hours
 
@@ -141,6 +144,15 @@ class TicketService:
 
         await repo.add_watcher(ticket_id=ticket.id, user_id=requester_id)
 
+        # SLA runtime (Phase 7 / S7.2): if a tenant sla_rule matches this ticket,
+        # open per-target sla_instances. Purely ADDITIVE — no rules configured →
+        # no-op, and the legacy sla_* fields / breach worker are unaffected. A
+        # matching error must never block ticket creation.
+        try:
+            await self._open_sla_instances(db, ticket)
+        except Exception:
+            logger.warning("sla_instance_open_failed", extra={"ticket_id": str(ticket.id)})
+
         # Fire automation rules asynchronously — never let errors propagate
         try:
             from app.workers.tasks_automation import run_ticket_automation
@@ -165,6 +177,40 @@ class TicketService:
             pass
 
         return ticket
+
+    async def _open_sla_instances(self, db: AsyncSession, ticket: Ticket) -> None:
+        """Match the ticket against the tenant's priority-ordered sla_rules and,
+        if one matches, open SLA instances for the chosen agreement's targets.
+        No-op when no rules are configured or none match."""
+        from app.models.sla import SLAAgreement, SLARule
+        from app.services import slm_service, sla_runtime
+
+        rules = (await db.execute(
+            select(SLARule)
+            .where(SLARule.tenant_id == ticket.tenant_id, SLARule.is_active.is_(True))
+            .order_by(SLARule.position)
+        )).scalars().all()
+        if not rules:
+            return
+
+        ctx = {
+            "type": ticket.type.value if hasattr(ticket.type, "value") else ticket.type,
+            "priority": ticket.priority.value if hasattr(ticket.priority, "value") else ticket.priority,
+            "category_id": str(ticket.category_id) if ticket.category_id else None,
+            "product_id": str(ticket.product_id) if ticket.product_id else None,
+        }
+        agreement_id = slm_service.match_agreement_id(rules, ctx)
+        if agreement_id is None:
+            return
+        ag = (await db.execute(
+            select(SLAAgreement).where(
+                SLAAgreement.id == agreement_id,
+                SLAAgreement.tenant_id == ticket.tenant_id,
+                SLAAgreement.deleted_at.is_(None),
+            )
+        )).scalar_one_or_none()
+        if ag is not None:
+            await sla_runtime.open_instances(db, ticket, ag)
 
     async def update_ticket(
         self,

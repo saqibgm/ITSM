@@ -113,6 +113,26 @@ async def test_override_again_cancels_previous(tenant_admin_client, agent_client
 
 
 @pytest.mark.asyncio
+async def test_ticket_create_auto_opens_instances_when_rule_matches(tenant_admin_client, agent_client):
+    ag = await _make_agreement_with_target(tenant_admin_client, "Auto SLA")
+    # catch-all rule (empty conditions) → matches any ticket
+    r = await tenant_admin_client.post("/api/v1/sla/rules", json={"agreement_id": ag["id"], "conditions": {}})
+    assert r.status_code == 201, r.text
+    ticket_id = await _make_ticket(agent_client)
+    g = await agent_client.get(f"/api/v1/tickets/{ticket_id}/sla")
+    assert g.status_code == 200
+    insts = g.json()["instances"]
+    assert len(insts) == 1 and insts[0]["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_ticket_create_no_rule_no_instances(agent_client):
+    ticket_id = await _make_ticket(agent_client)
+    g = await agent_client.get(f"/api/v1/tickets/{ticket_id}/sla")
+    assert g.status_code == 200 and g.json()["instances"] == []
+
+
+@pytest.mark.asyncio
 async def test_agent_cannot_override(tenant_admin_client, agent_client):
     ag = await _make_agreement_with_target(tenant_admin_client, "RBAC SLA")
     ticket_id = await _make_ticket(agent_client)
