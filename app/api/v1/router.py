@@ -31,6 +31,7 @@ from app.api.v1.ops import (
     ops_router, public_router as status_public_router, maint_router, workflows_router,
 )
 from app.api.v1.sre import router as sre_router
+from app.api.v1.slo import router as slo_router, services_slo_router
 
 router = APIRouter()
 
@@ -108,3 +109,7 @@ router.include_router(workflows_router)       # /api/v1/workflows
 
 # SRE analytics + post-incident review (Phase 8 / S8.5)
 router.include_router(sre_router)             # /api/v1/incidents/.../retrospective, /incidents/reports/*, etc.
+
+# SLI / SLO / error-budget reliability (Phase 9) — /api/v1/slo/*, /api/v1/services/{id}/slo
+router.include_router(slo_router)
+router.include_router(services_slo_router)

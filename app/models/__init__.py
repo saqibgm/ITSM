@@ -135,6 +135,17 @@ from app.models.oncall import (
     ServiceState,
     SeverityLevel,
 )
+from app.models.slo import (
+    BurnAlertKind,
+    BurnAlertState,
+    SLISource,
+    SLISourceType,
+    SLOBurnAlert,
+    SLOMeasurement,
+    SLOObjective,
+    SLOObjectiveType,
+    SLOWindow,
+)
 from app.models.virtual_agent import VirtualAgentMessage, VirtualAgentSession
 from app.models.webhook import WebhookDelivery, WebhookEndpoint
 
@@ -270,6 +281,16 @@ __all__ = [
     "ServiceState",
     "RotationType",
     "OverrideOrigin",
+    # SLI/SLO/error-budget reliability (Phase 9)
+    "SLISource",
+    "SLISourceType",
+    "SLOObjective",
+    "SLOObjectiveType",
+    "SLOWindow",
+    "SLOMeasurement",
+    "SLOBurnAlert",
+    "BurnAlertKind",
+    "BurnAlertState",
     # virtual agent
     "VirtualAgentSession",
     "VirtualAgentMessage",

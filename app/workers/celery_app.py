@@ -38,6 +38,7 @@ def create_celery() -> Celery:
         "app.workers.tasks_ai_budget",
         "app.workers.tasks_webhooks",
         "app.workers.tasks_automation",
+        "app.workers.tasks_slo",
     )
     app.conf.beat_schedule = {
         "sla-breach-check": {
@@ -87,6 +88,14 @@ def create_celery() -> Celery:
         "heartbeat-watchdog": {
             "task": "app.workers.tasks_alerting.check_heartbeats",
             "schedule": 60.0,  # every minute
+        },
+        "slo-sample-measurements": {
+            "task": "app.workers.tasks_slo.sample_slo_measurements",
+            "schedule": 300.0,  # every 5 minutes — one bucket per active SLO
+        },
+        "slo-evaluate-burn": {
+            "task": "app.workers.tasks_slo.evaluate_slo_burn",
+            "schedule": 300.0,  # every 5 minutes — multi-window burn-rate alerts
         },
     }
     return app
