@@ -23,6 +23,9 @@ from app.api.v1.integrations import router as integrations_router
 from app.api.v1.sla import router as sla_router
 from app.api.v1.sla_tickets import router as sla_tickets_router
 from app.api.v1.oncall import router as oncall_router, services_router
+from app.api.v1.alerting import (
+    router as alerting_router, alerts_router, routing_router,
+)
 
 router = APIRouter()
 
@@ -83,3 +86,8 @@ router.include_router(sla_tickets_router)
 # On-call & services (Phase 8 / S8.1) — /api/v1/services, /api/v1/on-call/*
 router.include_router(services_router)
 router.include_router(oncall_router)
+
+# Alerting, escalation & paging (Phase 8 / S8.2)
+router.include_router(alerting_router)   # /api/v1/on-call/escalation-policies, contact-methods, heartbeats
+router.include_router(alerts_router)     # /api/v1/alerts
+router.include_router(routing_router)    # /api/v1/routing/rules

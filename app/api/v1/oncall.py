@@ -55,12 +55,14 @@ class ServiceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: Optional[str] = None
     asset_id: Optional[UUID] = None
+    escalation_policy_id: Optional[UUID] = None
 
 
 class ServiceUpdate(BaseModel):
     name: Optional[str] = Field(default=None, max_length=255)
     description: Optional[str] = None
     asset_id: Optional[UUID] = None
+    escalation_policy_id: Optional[UUID] = None
     current_state: Optional[str] = None
     is_active: Optional[bool] = None
 

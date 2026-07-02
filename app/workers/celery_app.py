@@ -23,6 +23,22 @@ def create_celery() -> Celery:
     app.conf.result_serializer = "json"
     app.conf.accept_content = ["json"]
     app.conf.timezone = "UTC"
+    # Explicitly import every task module at worker/beat boot so all @task
+    # functions register (there is no autodiscover; task module names don't
+    # match Celery's default `tasks.py` convention). Read only at finalize,
+    # so plain `import celery_app` stays side-effect free.
+    app.conf.imports = (
+        "app.workers.tasks_sla",
+        "app.workers.tasks_alerting",
+        "app.workers.tasks_notifications",
+        "app.workers.tasks_ai_ticket",
+        "app.workers.tasks_kb",
+        "app.workers.tasks_ai_assets",
+        "app.workers.tasks_iam_sync",
+        "app.workers.tasks_ai_budget",
+        "app.workers.tasks_webhooks",
+        "app.workers.tasks_automation",
+    )
     app.conf.beat_schedule = {
         "sla-breach-check": {
             "task": "app.workers.tasks_sla.check_sla_breaches",
@@ -63,6 +79,14 @@ def create_celery() -> Celery:
         "retry-failed-webhooks": {
             "task": "app.workers.tasks_webhooks.retry_failed_webhooks",
             "schedule": crontab(minute="*/5"),  # every 5 minutes
+        },
+        "alert-escalation-advance": {
+            "task": "app.workers.tasks_alerting.process_alert_escalations",
+            "schedule": 60.0,  # every minute — advance unacked alert escalations
+        },
+        "heartbeat-watchdog": {
+            "task": "app.workers.tasks_alerting.check_heartbeats",
+            "schedule": 60.0,  # every minute
         },
     }
     return app
