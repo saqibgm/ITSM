@@ -86,7 +86,7 @@ async def create_service(body: ServiceCreate, cu: CurrentUser = Depends(require_
 async def _get_service(db, tid, sid) -> OnCallService:
     svc = (await db.execute(select(OnCallService).where(OnCallService.id == sid, OnCallService.tenant_id == tid))).scalar_one_or_none()
     if svc is None:
-        raise ResourceNotFoundError("Service not found")
+        raise ResourceNotFoundError("Service", "requested")
     return svc
 
 
@@ -222,7 +222,7 @@ async def delete_severity(severity_id: UUID, cu: CurrentUser = Depends(require_r
     tid = _tenant(cu)
     sev = (await db.execute(select(SeverityLevel).where(SeverityLevel.id == severity_id, SeverityLevel.tenant_id == tid))).scalar_one_or_none()
     if sev is None:
-        raise ResourceNotFoundError("Severity not found")
+        raise ResourceNotFoundError("Severity", "requested")
     await db.delete(sev); await db.commit()
 
 
@@ -233,7 +233,7 @@ async def _get_schedule(db, tid, sid) -> Schedule:
         .options(selectinload(Schedule.layers))
     )).scalar_one_or_none()
     if sch is None:
-        raise ResourceNotFoundError("Schedule not found")
+        raise ResourceNotFoundError("Schedule", "requested")
     return sch
 
 
@@ -296,7 +296,7 @@ async def _get_layer(db, tid, schedule_id, layer_id) -> ScheduleLayer:
         select(ScheduleLayer).where(ScheduleLayer.id == layer_id, ScheduleLayer.schedule_id == schedule_id)
     )).scalar_one_or_none()
     if layer is None:
-        raise ResourceNotFoundError("Layer not found")
+        raise ResourceNotFoundError("Layer", "requested")
     return layer
 
 
@@ -367,5 +367,5 @@ async def delete_override(override_id: UUID, cu: CurrentUser = Depends(require_r
         .where(ScheduleOverride.id == override_id, Schedule.tenant_id == tid)
     )).scalar_one_or_none()
     if ov is None:
-        raise ResourceNotFoundError("Override not found")
+        raise ResourceNotFoundError("Override", "requested")
     await db.delete(ov); await db.commit()

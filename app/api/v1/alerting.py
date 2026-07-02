@@ -80,7 +80,7 @@ async def _get_policy(db, tid, pid) -> EscalationPolicy:
         .options(selectinload(EscalationPolicy.steps))
     )).scalar_one_or_none()
     if p is None:
-        raise ResourceNotFoundError("Escalation policy not found")
+        raise ResourceNotFoundError("Escalation policy", "requested")
     return p
 
 
@@ -176,7 +176,7 @@ async def delete_contact(cm_id: UUID, cu: CurrentUser = Depends(require_role(*_R
     tid = _tenant(cu)
     cm = (await db.execute(select(ContactMethod).where(ContactMethod.id == cm_id, ContactMethod.tenant_id == tid))).scalar_one_or_none()
     if cm is None:
-        raise ResourceNotFoundError("Contact method not found")
+        raise ResourceNotFoundError("Contact method", "requested")
     await db.delete(cm); await db.commit()
 
 
@@ -218,7 +218,7 @@ async def ping_heartbeat(token: str, db: AsyncSession = Depends(get_db)):
     """Unauthenticated liveness ping (secret token). Records last_ping_at."""
     hb = (await db.execute(select(Heartbeat).where(Heartbeat.ping_token == token))).scalar_one_or_none()
     if hb is None:
-        raise ResourceNotFoundError("Unknown heartbeat token")
+        raise ResourceNotFoundError("Heartbeat", "token")
     hb.last_ping_at = func.now()
     await db.commit()
 
@@ -268,7 +268,7 @@ async def delete_routing(rule_id: UUID, cu: CurrentUser = Depends(require_role(*
     tid = _tenant(cu)
     r = (await db.execute(select(AlertRoutingRule).where(AlertRoutingRule.id == rule_id, AlertRoutingRule.tenant_id == tid))).scalar_one_or_none()
     if r is None:
-        raise ResourceNotFoundError("Routing rule not found")
+        raise ResourceNotFoundError("Routing rule", "requested")
     await db.delete(r); await db.commit()
 
 
@@ -321,7 +321,7 @@ async def ingest(body: AlertIngest, cu: CurrentUser = Depends(require_role(*_REA
 async def _get_alert(db, tid, aid) -> Alert:
     a = (await db.execute(select(Alert).where(Alert.id == aid, Alert.tenant_id == tid))).scalar_one_or_none()
     if a is None:
-        raise ResourceNotFoundError("Alert not found")
+        raise ResourceNotFoundError("Alert", "requested")
     return a
 
 

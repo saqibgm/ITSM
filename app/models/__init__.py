@@ -98,6 +98,15 @@ from app.models.alerting import (
     TargetType,
     Urgency,
 )
+from app.models.ops import (
+    MaintenanceWindow,
+    StatusPageChannel,
+    StatusPageConfig,
+    StatusPageSubscription,
+    Workflow,
+    WorkflowRun,
+    WorkflowRunStatus,
+)
 from app.models.incident import (
     Audience,
     Incident,
@@ -226,6 +235,12 @@ __all__ = [
     "Urgency",
     "AlertStatus",
     "PageStatus",
+    # ops: status page / maintenance / workflows (Phase 8 / S8.4)
+    "StatusPageConfig",
+    "StatusPageSubscription",
+    "MaintenanceWindow",
+    "Workflow",
+    "WorkflowRun",
     # incidents (Phase 8 / S8.3)
     "Incident",
     "IncidentRole",

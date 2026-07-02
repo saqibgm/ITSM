@@ -75,7 +75,7 @@ class StatusUpdateRequest(BaseModel):
 async def _get(db, tid, iid) -> Incident:
     inc = (await db.execute(select(Incident).where(Incident.id == iid, Incident.tenant_id == tid))).scalar_one_or_none()
     if inc is None:
-        raise ResourceNotFoundError("Incident not found")
+        raise ResourceNotFoundError("Incident", "requested")
     return inc
 
 
@@ -167,7 +167,7 @@ async def link_alert(incident_id: UUID, alert_id: UUID, cu: CurrentUser = Depend
     inc = await _get(db, tid, incident_id)
     alert = (await db.execute(select(Alert).where(Alert.id == alert_id, Alert.tenant_id == tid))).scalar_one_or_none()
     if alert is None:
-        raise ResourceNotFoundError("Alert not found")
+        raise ResourceNotFoundError("Alert", "requested")
     alert.incident_id = inc.id
     if inc.source_alert_id is None:
         inc.source_alert_id = alert.id

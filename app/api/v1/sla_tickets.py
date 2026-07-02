@@ -41,7 +41,7 @@ async def _get_ticket(db: AsyncSession, tid: UUID, ticket_id: UUID) -> Ticket:
         select(Ticket).where(Ticket.id == ticket_id, Ticket.tenant_id == tid)
     )).scalar_one_or_none()
     if t is None:
-        raise ResourceNotFoundError("Ticket not found")
+        raise ResourceNotFoundError("Ticket", "requested")
     return t
 
 
@@ -108,7 +108,7 @@ async def override_ticket_sla(
         )
     )).scalar_one_or_none()
     if ag is None:
-        raise ResourceNotFoundError("Agreement not found")
+        raise ResourceNotFoundError("Agreement", "requested")
     await sla_runtime.open_instances(db, ticket, ag)
     await db.commit()
     return {"ticket_id": str(ticket_id), "instances": await _sla_rows(db, ticket_id)}

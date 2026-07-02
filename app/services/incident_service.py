@@ -58,6 +58,14 @@ async def declare_incident(db: AsyncSession, tenant_id: UUID, actor_id: Optional
         alert = (await db.execute(select(Alert).where(Alert.id == source_alert_id))).scalar_one_or_none()
         if alert is not None:
             alert.incident_id = inc.id
+
+    # Fire incident_declared workflows (best-effort; never block declare).
+    try:
+        from app.services import workflow_service
+        ctx = {"title": title, "severity_id": str(severity_id) if severity_id else None}
+        await workflow_service.run_workflows(db, tenant_id, "incident_declared", ctx, incident=inc)
+    except Exception:
+        pass
     return inc
 
 

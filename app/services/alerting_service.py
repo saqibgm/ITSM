@@ -159,7 +159,21 @@ async def ingest_alert(db: AsyncSession, tenant_id: UUID, *, dedup_key: str, tit
             alert.escalation_policy_id = svc.escalation_policy_id
     db.add(alert)
     await db.flush()
-    await start_escalation(db, alert)
+
+    # Suppress paging during an active maintenance window for the service.
+    from app.services import workflow_service
+    suppressed = await workflow_service.is_service_in_maintenance(db, tenant_id, service_id)
+    if suppressed:
+        alert.escalation_policy_id = None  # recorded but not paged
+    else:
+        await start_escalation(db, alert)
+
+    # Fire alert_created workflows (best-effort; never block ingest).
+    try:
+        ctx = {"source": source, "title": title, "suppressed": suppressed, **(payload or {})}
+        await workflow_service.run_workflows(db, tenant_id, "alert_created", ctx, alert=alert)
+    except Exception:
+        pass
     return alert
 
 

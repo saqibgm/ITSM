@@ -234,7 +234,7 @@ async def update_coverage_window(
         select(CoverageWindow).where(CoverageWindow.id == cw_id, CoverageWindow.tenant_id == tid)
     )).scalar_one_or_none()
     if cw is None:
-        raise ResourceNotFoundError("Coverage window not found")
+        raise ResourceNotFoundError("Coverage window", "requested")
     for k, v in body.model_dump(exclude_none=True).items():
         setattr(cw, k, v)
     await db.commit()
@@ -253,7 +253,7 @@ async def delete_coverage_window(
         select(CoverageWindow).where(CoverageWindow.id == cw_id, CoverageWindow.tenant_id == tid)
     )).scalar_one_or_none()
     if cw is None:
-        raise ResourceNotFoundError("Coverage window not found")
+        raise ResourceNotFoundError("Coverage window", "requested")
     await db.delete(cw)
     await db.commit()
 
@@ -272,7 +272,7 @@ async def _get_agreement(db: AsyncSession, tid: UUID, agreement_id: UUID) -> SLA
         ).options(selectinload(SLAAgreement.targets))
     )).scalar_one_or_none()
     if ag is None:
-        raise ResourceNotFoundError("Agreement not found")
+        raise ResourceNotFoundError("Agreement", "requested")
     return ag
 
 
@@ -394,7 +394,7 @@ async def _get_target(db: AsyncSession, tid: UUID, target_id: UUID) -> SLATarget
         select(SLATarget).where(SLATarget.id == target_id, SLATarget.tenant_id == tid)
     )).scalar_one_or_none()
     if tgt is None:
-        raise ResourceNotFoundError("Target not found")
+        raise ResourceNotFoundError("Target", "requested")
     return tgt
 
 
@@ -472,7 +472,7 @@ async def delete_underpinning(
         ).where(SLAUnderpinning.id == link_id, SLATarget.tenant_id == tid)
     )).scalar_one_or_none()
     if link is None:
-        raise ResourceNotFoundError("Underpinning link not found")
+        raise ResourceNotFoundError("Underpinning link", "requested")
     await db.delete(link)
     await db.commit()
 
@@ -553,7 +553,7 @@ async def update_rule(
         select(SLARule).where(SLARule.id == rule_id, SLARule.tenant_id == tid)
     )).scalar_one_or_none()
     if rule is None:
-        raise ResourceNotFoundError("Rule not found")
+        raise ResourceNotFoundError("Rule", "requested")
     updates = body.model_dump(exclude_none=True)
     if "agreement_id" in updates:
         await _get_agreement(db, tid, updates["agreement_id"])
@@ -575,7 +575,7 @@ async def delete_rule(
         select(SLARule).where(SLARule.id == rule_id, SLARule.tenant_id == tid)
     )).scalar_one_or_none()
     if rule is None:
-        raise ResourceNotFoundError("Rule not found")
+        raise ResourceNotFoundError("Rule", "requested")
     await db.delete(rule)
     await db.commit()
 

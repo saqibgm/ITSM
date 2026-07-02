@@ -27,6 +27,9 @@ from app.api.v1.alerting import (
     router as alerting_router, alerts_router, routing_router,
 )
 from app.api.v1.incidents import router as incidents_router
+from app.api.v1.ops import (
+    ops_router, public_router as status_public_router, maint_router, workflows_router,
+)
 
 router = APIRouter()
 
@@ -95,3 +98,9 @@ router.include_router(routing_router)    # /api/v1/routing/rules
 
 # Incidents (Phase 8 / S8.3) — /api/v1/incidents/*
 router.include_router(incidents_router)
+
+# Status page, maintenance windows & workflows (Phase 8 / S8.4)
+router.include_router(ops_router)             # /api/v1/status-page
+router.include_router(status_public_router)   # /api/v1/status/{slug}  (UNAUTH)
+router.include_router(maint_router)           # /api/v1/maintenance-windows
+router.include_router(workflows_router)       # /api/v1/workflows
