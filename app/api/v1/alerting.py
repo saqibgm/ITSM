@@ -36,6 +36,16 @@ def _tenant(cu: CurrentUser) -> UUID:
     return cu.tenant_id
 
 
+def _scope(cu: CurrentUser):
+    """List/read scope: tenant_id, or None for a platform user with no tenant
+    selected (→ show all; RLS fail-open). Tenant users must carry a tenant."""
+    if cu.tenant_id is not None:
+        return cu.tenant_id
+    if cu.tier == "platform":
+        return None
+    raise AuthorizationError("Tenant context required")
+
+
 router = APIRouter(prefix="/on-call", tags=["alerting"])
 alerts_router = APIRouter(prefix="/alerts", tags=["alerting"])
 routing_router = APIRouter(prefix="/routing", tags=["alerting"])
@@ -300,8 +310,10 @@ class AlertResponse(BaseModel):
 
 @alerts_router.get("", response_model=list[AlertResponse])
 async def list_alerts(status: Optional[str] = None, cu: CurrentUser = Depends(require_role(*_READ)), db: AsyncSession = Depends(get_db)):
-    tid = _tenant(cu)
-    q = select(Alert).where(Alert.tenant_id == tid)
+    tid = _scope(cu)
+    q = select(Alert)
+    if tid is not None:
+        q = q.where(Alert.tenant_id == tid)
     if status:
         q = q.where(Alert.status == status)
     return (await db.execute(q.order_by(Alert.created_at.desc()).limit(200))).scalars().all()

@@ -31,6 +31,15 @@ def _tenant(cu: CurrentUser) -> UUID:
     return cu.tenant_id
 
 
+def _scope(cu: CurrentUser):
+    """tenant_id, or None for a platform user with no tenant selected (show all)."""
+    if cu.tenant_id is not None:
+        return cu.tenant_id
+    if cu.tier == "platform":
+        return None
+    raise AuthorizationError("Tenant context required")
+
+
 class IncidentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
@@ -81,8 +90,10 @@ async def _get(db, tid, iid) -> Incident:
 
 @router.get("", response_model=list[IncidentResponse])
 async def list_incidents(status: Optional[str] = None, cu: CurrentUser = Depends(require_role(*_READ)), db: AsyncSession = Depends(get_db)):
-    tid = _tenant(cu)
-    q = select(Incident).where(Incident.tenant_id == tid)
+    tid = _scope(cu)
+    q = select(Incident)
+    if tid is not None:
+        q = q.where(Incident.tenant_id == tid)
     if status:
         q = q.where(Incident.status == status)
     return (await db.execute(q.order_by(Incident.declared_at.desc()).limit(200))).scalars().all()
