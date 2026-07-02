@@ -30,6 +30,7 @@ from app.api.v1.incidents import router as incidents_router
 from app.api.v1.ops import (
     ops_router, public_router as status_public_router, maint_router, workflows_router,
 )
+from app.api.v1.sre import router as sre_router
 
 router = APIRouter()
 
@@ -104,3 +105,6 @@ router.include_router(ops_router)             # /api/v1/status-page
 router.include_router(status_public_router)   # /api/v1/status/{slug}  (UNAUTH)
 router.include_router(maint_router)           # /api/v1/maintenance-windows
 router.include_router(workflows_router)       # /api/v1/workflows
+
+# SRE analytics + post-incident review (Phase 8 / S8.5)
+router.include_router(sre_router)             # /api/v1/incidents/.../retrospective, /incidents/reports/*, etc.

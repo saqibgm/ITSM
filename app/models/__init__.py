@@ -98,6 +98,14 @@ from app.models.alerting import (
     TargetType,
     Urgency,
 )
+from app.models.retro import (
+    ActionItemStatus,
+    AIPIRDraft,
+    IncidentRetrospective,
+    PIRDraftStatus,
+    RetroActionItem,
+    RetroStatus,
+)
 from app.models.ops import (
     MaintenanceWindow,
     StatusPageChannel,
@@ -235,6 +243,10 @@ __all__ = [
     "Urgency",
     "AlertStatus",
     "PageStatus",
+    # post-incident review (Phase 8 / S8.5)
+    "IncidentRetrospective",
+    "RetroActionItem",
+    "AIPIRDraft",
     # ops: status page / maintenance / workflows (Phase 8 / S8.4)
     "StatusPageConfig",
     "StatusPageSubscription",
