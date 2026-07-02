@@ -82,6 +82,16 @@ from app.models.sla import (
     SLATarget,
     SLAUnderpinning,
 )
+from app.models.oncall import (
+    OnCallService,
+    OverrideOrigin,
+    RotationType,
+    Schedule,
+    ScheduleLayer,
+    ScheduleOverride,
+    ServiceState,
+    SeverityLevel,
+)
 from app.models.virtual_agent import VirtualAgentMessage, VirtualAgentSession
 from app.models.webhook import WebhookDelivery, WebhookEndpoint
 
@@ -175,6 +185,15 @@ __all__ = [
     "KBArticleFeedback",
     "KBArticleAttachment",
     "TicketKBLink",
+    # on-call (Phase 8 / S8.1)
+    "OnCallService",
+    "SeverityLevel",
+    "Schedule",
+    "ScheduleLayer",
+    "ScheduleOverride",
+    "ServiceState",
+    "RotationType",
+    "OverrideOrigin",
     # virtual agent
     "VirtualAgentSession",
     "VirtualAgentMessage",

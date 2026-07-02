@@ -22,6 +22,7 @@ from app.api.v1.webhooks_outbound import router as webhooks_outbound_router
 from app.api.v1.integrations import router as integrations_router
 from app.api.v1.sla import router as sla_router
 from app.api.v1.sla_tickets import router as sla_tickets_router
+from app.api.v1.oncall import router as oncall_router, services_router
 
 router = APIRouter()
 
@@ -78,3 +79,7 @@ router.include_router(sla_router)
 
 # Per-ticket SLA runtime (Phase 7 / S7.2) — /api/v1/tickets/{id}/sla[...]
 router.include_router(sla_tickets_router)
+
+# On-call & services (Phase 8 / S8.1) — /api/v1/services, /api/v1/on-call/*
+router.include_router(services_router)
+router.include_router(oncall_router)
