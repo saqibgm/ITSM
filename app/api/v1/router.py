@@ -26,6 +26,7 @@ from app.api.v1.oncall import router as oncall_router, services_router
 from app.api.v1.alerting import (
     router as alerting_router, alerts_router, routing_router,
 )
+from app.api.v1.incidents import router as incidents_router
 
 router = APIRouter()
 
@@ -91,3 +92,6 @@ router.include_router(oncall_router)
 router.include_router(alerting_router)   # /api/v1/on-call/escalation-policies, contact-methods, heartbeats
 router.include_router(alerts_router)     # /api/v1/alerts
 router.include_router(routing_router)    # /api/v1/routing/rules
+
+# Incidents (Phase 8 / S8.3) — /api/v1/incidents/*
+router.include_router(incidents_router)

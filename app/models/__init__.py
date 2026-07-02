@@ -98,6 +98,16 @@ from app.models.alerting import (
     TargetType,
     Urgency,
 )
+from app.models.incident import (
+    Audience,
+    Incident,
+    IncidentRole,
+    IncidentRoleType,
+    IncidentStatus,
+    IncidentStatusTransition as IncidentStatusTransitionModel,
+    IncidentStatusUpdate,
+    IncidentTimeline,
+)
 from app.models.oncall import (
     OnCallService,
     OverrideOrigin,
@@ -216,6 +226,14 @@ __all__ = [
     "Urgency",
     "AlertStatus",
     "PageStatus",
+    # incidents (Phase 8 / S8.3)
+    "Incident",
+    "IncidentRole",
+    "IncidentRoleType",
+    "IncidentStatus",
+    "IncidentStatusUpdate",
+    "IncidentTimeline",
+    "Audience",
     # on-call (Phase 8 / S8.1)
     "OnCallService",
     "SeverityLevel",
