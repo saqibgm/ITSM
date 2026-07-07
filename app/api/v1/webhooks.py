@@ -186,7 +186,6 @@ async def _provision_tenant(org_id: str, org_name: str) -> None:
                         response_time_minutes=response_mins,
                         resolution_time_minutes=resolution_mins,
                         business_hours_only=True,
-                        is_default=True,
                     )
                     session.add(sla)
 

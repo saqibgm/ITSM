@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import CurrentUser, require_role
 from app.database import get_db
-from app.exceptions import AuthorizationError, ResourceNotFoundError
+from app.exceptions import AuthorizationError, ResourceNotFoundError, ValidationError
 from app.models.slo import (
     BURN_DEFAULTS, SLISource, SLOBurnAlert, SLOMeasurement, SLOObjective,
 )
@@ -115,7 +115,13 @@ async def list_sources(cu: CurrentUser = Depends(require_role(*_READ)), db: Asyn
 
 @router.post("/sources", response_model=SourceResponse, status_code=201)
 async def create_source(body: SourceCreate, cu: CurrentUser = Depends(require_role(*_WRITE)), db: AsyncSession = Depends(get_db)):
-    src = SLISource(tenant_id=_tenant(cu), **body.model_dump())
+    tid = _tenant(cu)
+    # Guards against accidental duplicates (e.g. a double-submit from the UI)
+    dup = (await db.execute(select(SLISource.id).where(
+        SLISource.tenant_id == tid, SLISource.name == body.name))).scalar_one_or_none()
+    if dup is not None:
+        raise ValidationError(f"An SLI source named '{body.name}' already exists")
+    src = SLISource(tenant_id=tid, **body.model_dump())
     db.add(src)
     await db.commit()
     await db.refresh(src)
@@ -143,7 +149,12 @@ async def list_objectives(cu: CurrentUser = Depends(require_role(*_READ)), db: A
 
 @router.post("/objectives", response_model=ObjectiveResponse, status_code=201)
 async def create_objective(body: ObjectiveCreate, cu: CurrentUser = Depends(require_role(*_WRITE)), db: AsyncSession = Depends(get_db)):
-    slo = SLOObjective(tenant_id=_tenant(cu), **body.model_dump())
+    tid = _tenant(cu)
+    dup = (await db.execute(select(SLOObjective.id).where(
+        SLOObjective.tenant_id == tid, SLOObjective.name == body.name))).scalar_one_or_none()
+    if dup is not None:
+        raise ValidationError(f"An SLO named '{body.name}' already exists")
+    slo = SLOObjective(tenant_id=tid, **body.model_dump())
     db.add(slo)
     await db.commit()
     await db.refresh(slo)
