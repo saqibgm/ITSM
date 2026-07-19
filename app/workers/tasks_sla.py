@@ -78,7 +78,7 @@ async def _async_check_sla_breaches() -> None:
                 # Find breachable tickets using DB server NOW() — never Python datetime
                 result = await db.execute(
                     select(Ticket.id, Ticket.assignee_id, Ticket.team_id, Ticket.tenant_id,
-                           Ticket.priority, Ticket.requester_id)
+                           Ticket.priority, Ticket.requester_id, Ticket.type)
                     .where(
                         and_(
                             Ticket.sla_paused_at.is_(None),
@@ -124,6 +124,14 @@ async def _async_check_sla_breaches() -> None:
                         escalated_to=row.assignee_id,
                         reason="SLA breach — auto-escalated",
                     ))
+
+                    # RCA policy evaluation (specs/08 Phase 2) — best-effort,
+                    # never blocks SLA-breach flagging.
+                    try:
+                        await _maybe_require_rca_for_ticket(db, row)
+                    except Exception:
+                        pass
+
                 await db.commit()
 
                 total_breached += len(ticket_ids)
@@ -157,6 +165,39 @@ async def _async_check_sla_breaches() -> None:
         )
     else:
         logger.debug("sla_breach_check_no_breaches")
+
+
+async def _maybe_require_rca_for_ticket(db, row) -> None:
+    """RCA policy evaluation (specs/08 Phase 2) for a just-breached ticket.
+    Best-effort — exceptions are swallowed by the caller."""
+    from app.models.retro import IncidentRetrospective
+    from app.services import rca_policy_engine, rca_service
+    from sqlalchemy import func, select as sa_select
+
+    existing = (await db.execute(
+        sa_select(IncidentRetrospective).where(
+            IncidentRetrospective.source_ticket_id == row.id,
+            IncidentRetrospective.is_rca_governed.is_(True),
+        )
+    )).scalar_one_or_none()
+    if existing is not None:
+        return
+
+    priority_str = row.priority.value if hasattr(row.priority, "value") else str(row.priority)
+    ticket_type_str = row.type.value if hasattr(row.type, "value") else str(row.type)
+    ctx = rca_policy_engine.PolicyContext(
+        ticket_type=ticket_type_str, priority=priority_str, sla_breached=True, team_id=row.team_id,
+    )
+    decision = await rca_policy_engine.evaluate(db, row.tenant_id, ctx)
+    if decision is None or not decision.required:
+        return
+
+    due_at = func.now() + func.make_interval(0, 0, 0, decision.due_days)
+    await rca_service.create_rca(
+        db, row.tenant_id, None, source_type="ticket", source_ticket_id=row.id,
+        title=f"RCA for SLA-breached ticket (priority: {priority_str})",
+        due_at=due_at, trigger_policy_id=decision.policy_id,
+    )
 
 
 @celery_app.task(

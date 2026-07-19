@@ -32,6 +32,10 @@ from app.api.v1.ops import (
 )
 from app.api.v1.sre import router as sre_router
 from app.api.v1.slo import router as slo_router, services_slo_router
+from app.api.v1.recordings import router as recordings_router
+from app.api.v1.rca import router as rca_router
+from app.api.v1.rca_admin import router as rca_admin_router
+from app.api.v1.rca_dashboards import router as rca_dashboards_router
 
 router = APIRouter()
 
@@ -113,3 +117,9 @@ router.include_router(sre_router)             # /api/v1/incidents/.../retrospect
 # SLI / SLO / error-budget reliability (Phase 9) — /api/v1/slo/*, /api/v1/services/{id}/slo
 router.include_router(slo_router)
 router.include_router(services_slo_router)
+
+# Support Session Recording + RCA Governance (specs/08, Phase 1+2)
+router.include_router(recordings_router)               # /api/v1/support-recordings/*, /tickets/{id}/recordings/*, /dashboards/recordings/*
+router.include_router(rca_router, prefix="/rca")        # /api/v1/rca/*
+router.include_router(rca_admin_router)                 # /api/v1/tenant/rca-policies/*, /tenant/recording-policies
+router.include_router(rca_dashboards_router)            # /api/v1/dashboards/rca/*

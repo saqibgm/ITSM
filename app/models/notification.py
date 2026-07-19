@@ -33,6 +33,20 @@ class NotificationType(str, enum.Enum):
     kb_article_published = "kb_article_published"
     mention = "mention"
     system = "system"
+    recording_linked = "recording_linked"
+    recording_required_missing = "recording_required_missing"
+    recording_inaccessible = "recording_inaccessible"
+    recording_consent_missing = "recording_consent_missing"
+    recording_summary_ready = "recording_summary_ready"
+    rca_required = "rca_required"
+    rca_due_soon = "rca_due_soon"
+    rca_overdue = "rca_overdue"
+    rca_submitted = "rca_submitted"
+    rca_rejected = "rca_rejected"
+    rca_approved = "rca_approved"
+    rca_action_assigned = "rca_action_assigned"
+    rca_action_overdue = "rca_action_overdue"
+    rca_completed = "rca_completed"
 
 
 # SQLAlchemy native DB enum — create_type=False because migrations create it explicitly

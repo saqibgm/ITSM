@@ -89,6 +89,50 @@ async def change_status(db: AsyncSession, incident: Incident, new_status: str, a
         incident.resolved_at = func.now()
     await _timeline(db, incident.id, actor_id, "status_change", {"from": old, "to": new_status})
 
+    # RCA policy evaluation on resolve — best-effort, never blocks resolution
+    # (specs/08 Phase 2). Mirrors the workflow_service best-effort pattern above.
+    if new_status == _RESOLVE_STATUS:
+        try:
+            await _maybe_require_rca(db, incident, actor_id)
+        except Exception:
+            pass
+
+
+async def _maybe_require_rca(db: AsyncSession, incident: Incident, actor_id: Optional[UUID]) -> None:
+    from app.models.oncall import SeverityLevel
+    from app.models.retro import IncidentRetrospective
+    from app.services import rca_policy_engine, rca_service
+
+    existing = (await db.execute(
+        select(IncidentRetrospective).where(
+            IncidentRetrospective.incident_id == incident.id,
+            IncidentRetrospective.is_rca_governed.is_(True),
+        )
+    )).scalar_one_or_none()
+    if existing is not None:
+        return
+
+    severity_rank = None
+    if incident.severity_id is not None:
+        sev = (await db.execute(select(SeverityLevel).where(SeverityLevel.id == incident.severity_id))).scalar_one_or_none()
+        severity_rank = sev.rank if sev is not None else None
+
+    ctx = rca_policy_engine.PolicyContext(
+        ticket_type="incident", severity_rank=severity_rank,
+        service_id=(incident.affected_service_ids or [None])[0],
+    )
+    decision = await rca_policy_engine.evaluate(db, incident.tenant_id, ctx)
+    if decision is None or not decision.required:
+        return
+
+    due_at = func.now() + func.make_interval(0, 0, 0, decision.due_days)
+    await rca_service.create_rca(
+        db, incident.tenant_id, actor_id, source_type="incident", incident_id=incident.id,
+        title=f"RCA for {incident.incident_number}: {incident.title}",
+        severity=f"sev{severity_rank}" if severity_rank else None,
+        due_at=due_at, trigger_policy_id=decision.policy_id,
+    )
+
 
 async def assign_role(db: AsyncSession, incident: Incident, role: str, user_id: UUID, actor_id: Optional[UUID]) -> IncidentRole:
     existing = (await db.execute(

@@ -9,6 +9,8 @@ future upgrade.
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
@@ -21,6 +23,15 @@ from app.models.incident import Incident, IncidentTimeline
 from app.models.oncall import OnCallService, Schedule
 from app.models.retro import AIPIRDraft
 from app.services import oncall_service
+
+logger = logging.getLogger(__name__)
+
+_PIR_SYSTEM_PROMPT = (
+    "You are drafting a post-incident-review (PIR) summary for an internal ITSM "
+    "incident. Be blameless and factual, grounded only in the provided timeline. "
+    "Respond as strict JSON with keys: summary, contributing_factors, impact, "
+    "action_items (list of short strings)."
+)
 
 
 def _secs(v) -> Optional[float]:
@@ -81,8 +92,16 @@ async def alert_noise(db: AsyncSession, tenant_id: UUID, since: Optional[datetim
             "dedup_ratio": round(occ / total, 2) if total else None}
 
 
-async def generate_pir_draft(db: AsyncSession, tenant_id: UUID, incident: Incident) -> AIPIRDraft:
-    """Templated post-incident-review draft from the incident + timeline."""
+async def generate_pir_draft(db: AsyncSession, tenant_id: UUID, incident: Incident, redis=None) -> AIPIRDraft:
+    """Post-incident-review draft from the incident + timeline.
+
+    Template-only when `redis` is omitted (byte-for-byte identical to the
+    original behavior — backward compatible for any caller that doesn't pass
+    it). When `redis` is provided, attempts a real AI draft first and only
+    falls back to the template on any failure (budget exhausted, timeout,
+    malformed response) — incident responders must never be blocked by an
+    AI outage (specs/08 decision).
+    """
     events = (await db.execute(
         select(IncidentTimeline).where(IncidentTimeline.incident_id == incident.id)
         .order_by(IncidentTimeline.at)
@@ -97,10 +116,41 @@ async def generate_pir_draft(db: AsyncSession, tenant_id: UUID, incident: Incide
     factors = "Contributing factors to be confirmed by the responders (auto-draft)."
     impact = "Impact scope to be confirmed (affected services: "
     impact += (", ".join(str(s) for s in (incident.affected_service_ids or [])) or "none recorded") + ")."
+    action_items = [{"description": "Document root cause"},
+                     {"description": "Add monitoring/alerting gap follow-up"}]
+    model_version = "template-v1"
+
+    if redis is not None:
+        try:
+            from app.config import get_settings
+            from app.services.ai.ai_service import ai_service
+            from app.services.pii_masker import pii_masker
+
+            context = (f"Incident {incident.incident_number}: {incident.title}\n"
+                       f"{incident.description or ''}\nTimeline:\n" +
+                       "\n".join(f"- {e.at}: {e.event_type} {e.data}" for e in events))
+            masked = pii_masker.mask(context)
+            raw = await ai_service.generate(
+                tenant_id=str(tenant_id), redis=redis,
+                messages=[{"role": "user", "content": masked}],
+                system=_PIR_SYSTEM_PROMPT, feature="pir_draft",
+            )
+            parsed = json.loads(raw)
+            summary = parsed.get("summary", summary)
+            factors = parsed.get("contributing_factors", factors)
+            impact = parsed.get("impact", impact)
+            action_items = [{"description": d} for d in parsed.get("action_items", []) if d] or action_items
+            model_version = get_settings().CLAUDE_MODEL
+        except Exception as exc:
+            logger.warning(
+                "pir_ai_draft_failed_fallback_to_template",
+                extra={"tenant_id": str(tenant_id), "incident_id": str(incident.id), "error": str(exc)},
+            )
+            # summary/factors/impact/action_items/model_version stay at template defaults
+
     draft = AIPIRDraft(tenant_id=tenant_id, incident_id=incident.id, summary=summary,
                        contributing_factors=factors, impact=impact,
-                       action_items=[{"description": "Document root cause"},
-                                     {"description": "Add monitoring/alerting gap follow-up"}])
+                       action_items=action_items, model_version=model_version)
     db.add(draft)
     return draft
 

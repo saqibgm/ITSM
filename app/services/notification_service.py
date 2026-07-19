@@ -20,6 +20,39 @@ from app.models.notification import Notification, NotificationPreference, Notifi
 
 logger = logging.getLogger(__name__)
 
+# Notification type -> email template name. Module-level (not inline in
+# _enqueue_email) so a regression test can assert every NotificationType has
+# an entry — a type silently falling back to "ticket_assigned" is a real gap,
+# not a deliberate default.
+EMAIL_TEMPLATE_MAP: dict[NotificationType, str] = {
+    NotificationType.ticket_assigned: "ticket_assigned",
+    NotificationType.ticket_updated: "ticket_assigned",
+    NotificationType.ticket_commented: "ticket_commented",
+    NotificationType.ticket_sla_warning: "ticket_sla_warning",
+    NotificationType.ticket_sla_breached: "ticket_sla_breach",
+    NotificationType.asset_maintenance_due: "ticket_assigned",  # generic fallback
+    NotificationType.kb_article_published: "kb_article_published",
+    NotificationType.mention: "mention",
+    NotificationType.system: "ticket_assigned",  # generic fallback
+    # RCA/recording types reuse the closest existing template shape rather
+    # than 14 bespoke templates — intentional simplification for Phase 1/2,
+    # revisit in Phase 5 (specs/08).
+    NotificationType.recording_linked: "ticket_assigned",
+    NotificationType.recording_required_missing: "ticket_sla_warning",
+    NotificationType.recording_inaccessible: "ticket_sla_warning",
+    NotificationType.recording_consent_missing: "ticket_sla_warning",
+    NotificationType.recording_summary_ready: "ticket_assigned",
+    NotificationType.rca_required: "ticket_assigned",
+    NotificationType.rca_due_soon: "ticket_sla_warning",
+    NotificationType.rca_overdue: "ticket_sla_breach",
+    NotificationType.rca_submitted: "ticket_assigned",
+    NotificationType.rca_rejected: "ticket_assigned",
+    NotificationType.rca_approved: "ticket_assigned",
+    NotificationType.rca_action_assigned: "ticket_assigned",
+    NotificationType.rca_action_overdue: "ticket_sla_breach",
+    NotificationType.rca_completed: "ticket_assigned",
+}
+
 
 class NotificationService:
     """Async service for creating and managing in-app notifications."""
@@ -351,20 +384,7 @@ class NotificationService:
                 return
 
             to_email: str = row
-
-            # Map notification type to template name
-            template_map = {
-                NotificationType.ticket_assigned: "ticket_assigned",
-                NotificationType.ticket_updated: "ticket_assigned",
-                NotificationType.ticket_commented: "ticket_commented",
-                NotificationType.ticket_sla_warning: "ticket_sla_warning",
-                NotificationType.ticket_sla_breached: "ticket_sla_breach",
-                NotificationType.asset_maintenance_due: "ticket_assigned",  # generic fallback
-                NotificationType.kb_article_published: "kb_article_published",
-                NotificationType.mention: "mention",
-                NotificationType.system: "ticket_assigned",  # generic fallback
-            }
-            template_name = template_map.get(type, "ticket_assigned")
+            template_name = EMAIL_TEMPLATE_MAP.get(type, "ticket_assigned")
 
             send_email_notification.apply_async(
                 args=[to_email, template_name, {"title": title, "body": body}]

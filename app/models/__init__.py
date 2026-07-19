@@ -99,12 +99,24 @@ from app.models.alerting import (
     Urgency,
 )
 from app.models.retro import (
+    RCA_EVIDENCE_TYPES,
     ActionItemStatus,
     AIPIRDraft,
     IncidentRetrospective,
     PIRDraftStatus,
+    RcaEvidenceChecklist,
+    RcaHistory,
+    RcaLinkedEntity,
+    RcaPolicy,
+    RcaStatus,
     RetroActionItem,
     RetroStatus,
+)
+from app.models.recording import (
+    RecordingAccessLog,
+    SupportRecording,
+    TenantRecordingPolicy,
+    TicketRecordingLink,
 )
 from app.models.ops import (
     MaintenanceWindow,
@@ -254,10 +266,24 @@ __all__ = [
     "Urgency",
     "AlertStatus",
     "PageStatus",
-    # post-incident review (Phase 8 / S8.5)
+    # post-incident review / RCA governance (Phase 8 / S8.5, evolved specs/08)
     "IncidentRetrospective",
     "RetroActionItem",
     "AIPIRDraft",
+    "RetroStatus",
+    "RcaStatus",
+    "ActionItemStatus",
+    "PIRDraftStatus",
+    "RcaPolicy",
+    "RcaLinkedEntity",
+    "RcaEvidenceChecklist",
+    "RcaHistory",
+    "RCA_EVIDENCE_TYPES",
+    # support session recording (specs/08)
+    "SupportRecording",
+    "TicketRecordingLink",
+    "RecordingAccessLog",
+    "TenantRecordingPolicy",
     # ops: status page / maintenance / workflows (Phase 8 / S8.4)
     "StatusPageConfig",
     "StatusPageSubscription",

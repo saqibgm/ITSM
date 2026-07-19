@@ -18,6 +18,8 @@ def create_celery() -> Celery:
         "app.workers.tasks_ai_budget.*": {"queue": "low"},
         "app.workers.tasks_webhooks.*": {"queue": "default"},
         "app.workers.tasks_automation.*": {"queue": "default"},
+        "app.workers.tasks_rca.*": {"queue": "default"},
+        "app.workers.tasks_recordings.*": {"queue": "low"},
     }
     app.conf.task_serializer = "json"
     app.conf.result_serializer = "json"
@@ -39,6 +41,8 @@ def create_celery() -> Celery:
         "app.workers.tasks_webhooks",
         "app.workers.tasks_automation",
         "app.workers.tasks_slo",
+        "app.workers.tasks_rca",
+        "app.workers.tasks_recordings",
     )
     app.conf.beat_schedule = {
         "sla-breach-check": {
@@ -96,6 +100,26 @@ def create_celery() -> Celery:
         "slo-evaluate-burn": {
             "task": "app.workers.tasks_slo.evaluate_slo_burn",
             "schedule": 300.0,  # every 5 minutes — multi-window burn-rate alerts
+        },
+        "rca-overdue-scan": {
+            "task": "app.workers.tasks_rca.rca_overdue_scan",
+            "schedule": 900.0,  # every 15 minutes
+        },
+        "rca-due-soon-scan": {
+            "task": "app.workers.tasks_rca.rca_due_soon_scan",
+            "schedule": 1800.0,  # every 30 minutes
+        },
+        "rca-action-overdue-scan": {
+            "task": "app.workers.tasks_rca.rca_action_overdue_scan",
+            "schedule": 900.0,  # every 15 minutes
+        },
+        "rca-policy-safety-net": {
+            "task": "app.workers.tasks_rca.rca_policy_safety_net_scan",
+            "schedule": 600.0,  # every 10 minutes
+        },
+        "recording-link-health-check": {
+            "task": "app.workers.tasks_recordings.recording_link_health_check",
+            "schedule": 1800.0,  # every 30 minutes
         },
     }
     return app

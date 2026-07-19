@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import CurrentUser, require_role
 from app.database import get_db
 from app.exceptions import AuthorizationError, ResourceNotFoundError
+from app.redis_client import get_redis
 from app.models.incident import Incident
 from app.models.retro import AIPIRDraft, IncidentRetrospective, RetroActionItem
 from app.services import sre_service
@@ -68,11 +69,12 @@ async def get_retro(incident_id: UUID, cu: CurrentUser = Depends(require_role(*_
 
 @router.put("/incidents/{incident_id}/retrospective", response_model=RetroResponse)
 async def upsert_retro(incident_id: UUID, body: RetroIn, cu: CurrentUser = Depends(require_role(*_WRITE)), db: AsyncSession = Depends(get_db)):
-    await _get_incident(db, _tenant(cu), incident_id)
+    tid = _tenant(cu)
+    await _get_incident(db, tid, incident_id)
     retro = await _get_retro(db, incident_id)
     data = body.model_dump(exclude_none=True)
     if retro is None:
-        retro = IncidentRetrospective(incident_id=incident_id, **data)
+        retro = IncidentRetrospective(tenant_id=tid, incident_id=incident_id, **data)
         db.add(retro)
     else:
         for k, v in data.items():
@@ -85,10 +87,10 @@ async def upsert_retro(incident_id: UUID, body: RetroIn, cu: CurrentUser = Depen
 
 
 @router.post("/incidents/{incident_id}/pir-draft")
-async def generate_pir(incident_id: UUID, cu: CurrentUser = Depends(require_role(*_WRITE)), db: AsyncSession = Depends(get_db)):
+async def generate_pir(incident_id: UUID, cu: CurrentUser = Depends(require_role(*_WRITE)), db: AsyncSession = Depends(get_db), redis=Depends(get_redis)):
     tid = _tenant(cu)
     inc = await _get_incident(db, tid, incident_id)
-    draft = await sre_service.generate_pir_draft(db, tid, inc)
+    draft = await sre_service.generate_pir_draft(db, tid, inc, redis=redis)
     await db.commit(); await db.refresh(draft)
     return {"id": str(draft.id), "summary": draft.summary, "contributing_factors": draft.contributing_factors,
             "impact": draft.impact, "action_items": draft.action_items, "model_version": draft.model_version,
@@ -110,12 +112,13 @@ class ActionItemIn(BaseModel):
 
 @router.post("/incidents/{incident_id}/retrospective/action-items")
 async def add_action_item(incident_id: UUID, body: ActionItemIn, cu: CurrentUser = Depends(require_role(*_WRITE)), db: AsyncSession = Depends(get_db)):
-    await _get_incident(db, _tenant(cu), incident_id)
+    tid = _tenant(cu)
+    await _get_incident(db, tid, incident_id)
     retro = await _get_retro(db, incident_id)
     if retro is None:
-        retro = IncidentRetrospective(incident_id=incident_id)
+        retro = IncidentRetrospective(tenant_id=tid, incident_id=incident_id)
         db.add(retro); await db.flush()
-    item = RetroActionItem(retro_id=retro.id, description=body.description, owner_id=body.owner_id)
+    item = RetroActionItem(tenant_id=tid, retro_id=retro.id, description=body.description, owner_id=body.owner_id)
     db.add(item); await db.commit(); await db.refresh(item)
     return {"id": str(item.id), "description": item.description, "status": item.status}
 
