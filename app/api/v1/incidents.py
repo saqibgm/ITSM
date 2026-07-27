@@ -43,6 +43,7 @@ def _scope(cu: CurrentUser):
 class IncidentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
+    tenant_id: UUID
     incident_number: str
     title: str
     description: Optional[str] = None
@@ -82,7 +83,12 @@ class StatusUpdateRequest(BaseModel):
 
 
 async def _get(db, tid, iid) -> Incident:
-    inc = (await db.execute(select(Incident).where(Incident.id == iid, Incident.tenant_id == tid))).scalar_one_or_none()
+    """tid=None (platform user, no tenant selected) fetches across all tenants —
+    matches list_incidents' cross-tenant behavior via _scope()."""
+    q = select(Incident).where(Incident.id == iid)
+    if tid is not None:
+        q = q.where(Incident.tenant_id == tid)
+    inc = (await db.execute(q)).scalar_one_or_none()
     if inc is None:
         raise ResourceNotFoundError("Incident", "requested")
     return inc
@@ -114,7 +120,7 @@ async def declare(body: DeclareRequest, cu: CurrentUser = Depends(require_role(*
 
 @router.get("/{incident_id}", response_model=IncidentResponse)
 async def get_incident(incident_id: UUID, cu: CurrentUser = Depends(require_role(*_READ)), db: AsyncSession = Depends(get_db)):
-    return await _get(db, _tenant(cu), incident_id)
+    return await _get(db, _scope(cu), incident_id)
 
 
 @router.post("/{incident_id}/change-status", response_model=IncidentResponse)
@@ -135,14 +141,14 @@ async def assign_role(incident_id: UUID, body: AssignRoleRequest, cu: CurrentUse
 
 @router.get("/{incident_id}/roles")
 async def list_roles(incident_id: UUID, cu: CurrentUser = Depends(require_role(*_READ)), db: AsyncSession = Depends(get_db)):
-    await _get(db, _tenant(cu), incident_id)
+    await _get(db, _scope(cu), incident_id)
     rows = (await db.execute(select(IncidentRole).where(IncidentRole.incident_id == incident_id))).scalars().all()
     return {"roles": [{"role": r.role, "user_id": str(r.user_id)} for r in rows]}
 
 
 @router.get("/{incident_id}/timeline")
 async def timeline(incident_id: UUID, cu: CurrentUser = Depends(require_role(*_READ)), db: AsyncSession = Depends(get_db)):
-    await _get(db, _tenant(cu), incident_id)
+    await _get(db, _scope(cu), incident_id)
     rows = (await db.execute(
         select(IncidentTimeline).where(IncidentTimeline.incident_id == incident_id).order_by(IncidentTimeline.at)
     )).scalars().all()
@@ -164,7 +170,7 @@ async def post_status_update(incident_id: UUID, body: StatusUpdateRequest, cu: C
 
 @router.get("/{incident_id}/status-updates")
 async def list_status_updates(incident_id: UUID, cu: CurrentUser = Depends(require_role(*_READ)), db: AsyncSession = Depends(get_db)):
-    await _get(db, _tenant(cu), incident_id)
+    await _get(db, _scope(cu), incident_id)
     rows = (await db.execute(
         select(IncidentStatusUpdate).where(IncidentStatusUpdate.incident_id == incident_id).order_by(IncidentStatusUpdate.created_at)
     )).scalars().all()
@@ -189,5 +195,5 @@ async def link_alert(incident_id: UUID, alert_id: UUID, cu: CurrentUser = Depend
 
 @router.get("/{incident_id}/blast-radius")
 async def blast_radius(incident_id: UUID, cu: CurrentUser = Depends(require_role(*_READ)), db: AsyncSession = Depends(get_db)):
-    inc = await _get(db, _tenant(cu), incident_id)
+    inc = await _get(db, _scope(cu), incident_id)
     return await incident_service.blast_radius(db, inc)

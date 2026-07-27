@@ -36,6 +36,17 @@ class TicketRepository(BaseRepository[Ticket]):
         result = await self.session.execute(q)
         return result.scalar_one_or_none()
 
+    async def get_by_number(self, ticket_number: str, tenant_id: UUID | None) -> Ticket | None:
+        """Resolve a human-facing ticket number (globally unique, see
+        ticket_number_seq) to the full ticket row."""
+        q = select(Ticket).where(
+            Ticket.ticket_number == ticket_number, Ticket.deleted_at.is_(None)
+        )
+        if tenant_id is not None:
+            q = q.where(Ticket.tenant_id == tenant_id)
+        result = await self.session.execute(q)
+        return result.scalar_one_or_none()
+
     # ------------------------------------------------------------------
     # List with cursor-based pagination
     # ------------------------------------------------------------------

@@ -214,6 +214,31 @@ async def test_get_ticket_wrong_tenant_returns_404(async_client, db, test_org_id
 
 
 # ===========================================================================
+# GET /api/v1/tickets/by-number/{ticket_number}
+# ===========================================================================
+# Mobile parity (specs/08): the chat client only ever has the human-facing
+# ticket number a user typed, never the UUID every other route expects.
+
+
+async def test_get_ticket_by_number_returns_the_matching_ticket(agent_client):
+    with patch("app.workers.tasks_ai_ticket.process_new_ticket.delay", return_value=None):
+        create_resp = await agent_client.post("/api/v1/tickets", json=_valid_ticket_body())
+    assert create_resp.status_code == 201, create_resp.text
+    created = create_resp.json()
+
+    resp = await agent_client.get(f"/api/v1/tickets/by-number/{created['ticket_number']}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == created["id"]
+    assert body["ticket_number"] == created["ticket_number"]
+
+
+async def test_get_ticket_by_number_unknown_number_returns_404(agent_client):
+    resp = await agent_client.get("/api/v1/tickets/by-number/NOSUCHNUMBER")
+    assert resp.status_code == 404
+
+
+# ===========================================================================
 # Idempotency
 # ===========================================================================
 

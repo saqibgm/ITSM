@@ -14,6 +14,7 @@ from fastapi import Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwks import verify_token
@@ -145,13 +146,31 @@ async def _get_or_provision_user(
             is_active=True,
         )
         db.add(user)
-        await db.flush()  # populate user.id
-        # Persist immediately. get_db never commits on its own, so on a read-only
-        # request the provisioning would otherwise roll back at request end — and
-        # a follow-up call referencing the (now-ephemeral) id would fail with
-        # "user not found". Committing here gives the mirror a stable id and makes
-        # silent provisioning work uniformly across reads and writes.
-        await db.commit()
+        try:
+            await db.flush()  # populate user.id
+            # Persist immediately. get_db never commits on its own, so on a
+            # read-only request the provisioning would otherwise roll back at
+            # request end — and a follow-up call referencing the (now-ephemeral)
+            # id would fail with "user not found". Committing here gives the
+            # mirror a stable id and makes silent provisioning work uniformly
+            # across reads and writes.
+            await db.commit()
+        except IntegrityError:
+            # Two concurrent requests for the same (iam_user_id, tenant_id) can
+            # both see no existing row and both try to insert — e.g. switching
+            # the platform TenantSwitcher fires several requests at once that
+            # all provision the same platform user into the newly-selected
+            # tenant. The loser hits the unique constraint; re-select rather
+            # than surface a 409 for what is, from the caller's perspective, a
+            # successful "get or create".
+            await db.rollback()
+            result = await db.execute(
+                select(User).where(User.iam_user_id == iam_user_id, User.tenant_id == tenant.id)
+            )
+            user = result.scalar_one_or_none()
+            if user is None:
+                raise
+            return user
         await db.refresh(user)
         logger.info(
             "user_auto_provisioned",

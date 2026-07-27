@@ -367,6 +367,33 @@ async def create_tag(
 
 
 # ---------------------------------------------------------------------------
+# GET /tickets/by-number/{ticket_number}
+# ---------------------------------------------------------------------------
+
+
+@router.get("/by-number/{ticket_number}", response_model=TicketResponse)
+async def get_ticket_by_number(
+    ticket_number: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TicketResponse:
+    """Resolve a human-facing ticket number (e.g. "00042") to the full
+    ticket. Used by clients — like the mobile chat client — that only have
+    the number a user typed, not the UUID every other route expects."""
+    tenant_id = _resolve_list_scope(current_user)
+
+    repo = TicketRepository(db)
+    ticket = await repo.get_by_number(ticket_number, tenant_id)
+    if ticket is None:
+        raise ResourceNotFoundError("Ticket", ticket_number)
+    return (
+        await _attach_user_names(
+            db, await _attach_product_names(db, [TicketResponse.model_validate(ticket)])
+        )
+    )[0]
+
+
+# ---------------------------------------------------------------------------
 # GET /tickets/{ticket_id}
 # ---------------------------------------------------------------------------
 
