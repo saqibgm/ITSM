@@ -35,7 +35,9 @@ async def refresh_jwks() -> None:
     """
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(
+            timeout=10.0, proxy=settings.IAM_JWKS_PROXY or None,
+        ) as client:
             response = await client.get(settings.IAM_JWKS_URL)
             response.raise_for_status()
             jwks = response.json()

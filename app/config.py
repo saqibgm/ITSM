@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     IAM_CLIENT_ID: str
     IAM_CLIENT_SECRET: str
     IAM_JWKS_URL: str
+    # Optional proxy for just the JWKS fetch (e.g. "socks5://172.21.0.1:1080").
+    # Unset in normal operation — only needed when this host's own network
+    # can't reach IAM_JWKS_URL directly (see refresh_jwks() in app/auth/jwks.py).
+    IAM_JWKS_PROXY: str = ""
     IAM_WEBHOOK_SECRET: str
     # Static bearer token for inbound IAM→ITSM internal calls (sync endpoint).
     IAM_INTERNAL_TOKEN: str = ""

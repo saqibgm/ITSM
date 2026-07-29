@@ -15,7 +15,9 @@ dependencies = [
     "openai>=1.30",
     "pgvector>=0.3",
     "python-jose[cryptography]>=3.3",
-    "httpx>=0.27",
+    "httpx[socks]>=0.27",  # [socks] pulls in socksio — lets refresh_jwks() use a
+    # SOCKS proxy for IAM_JWKS_PROXY (see app/auth/jwks.py) if that host's own
+    # network can't reach the IAM JWKS endpoint directly.
     "aiosmtplib>=3.0",
     "jinja2>=3.1",
     "jsonschema>=4.22",
