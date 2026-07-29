@@ -163,6 +163,11 @@ def verify_token(token: str) -> dict:
                 "verify_exp": True,
                 "verify_iss": True,
                 "verify_aud": verify_aud,
+                # A few seconds of clock drift between this host and the IAM
+                # server otherwise makes a freshly-minted token look "not yet
+                # valid" — python-jose takes leeway inside `options`, not as
+                # a top-level decode() kwarg (unlike PyJWT).
+                "leeway": 10,
             },
         )
     except JWTError as exc:
