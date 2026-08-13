@@ -8,7 +8,9 @@ Rules enforced here:
 """
 
 import asyncio
+import json
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -26,6 +28,43 @@ _jwks_cache: dict[str, Any] = {}
 # How often to refresh keys in the background (seconds)
 _JWKS_REFRESH_INTERVAL_SECONDS = 6 * 3600  # 6 hours
 
+# A last-known-good snapshot of IAM's signing keys, bundled with the app.
+# Realm signing keys rotate rarely (a deliberate admin action), so a
+# stale-but-valid snapshot is far more useful than an outright auth outage
+# when this host can reach IAM through neither the proxy nor directly.
+# Live network paths are always tried first — this is a safety net, not a
+# soft dependency. Refresh the file whenever keys actually rotate.
+_JWKS_FALLBACK_FILE = os.path.join(os.path.dirname(__file__), "jwks_fallback.json")
+
+
+async def _fetch_jwks(jwks_url: str, proxy: str | None) -> dict:
+    """GET the JWKS document, preferring *proxy* but falling back to a direct
+    connection if the proxy is unreachable, then to the bundled fallback
+    snapshot if neither network path works at all.
+    """
+    errors = []
+    if proxy:
+        try:
+            async with httpx.AsyncClient(timeout=10.0, proxy=proxy) as client:
+                response = await client.get(jwks_url)
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            errors.append(f"proxy: {e}")
+            logger.warning("jwks_proxy_fetch_failed_falling_back_direct", exc_info=True)
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(jwks_url)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        errors.append(f"direct: {e}")
+        logger.warning("jwks_direct_fetch_failed_falling_back_to_bundled_snapshot", exc_info=True)
+
+    with open(_JWKS_FALLBACK_FILE, encoding="utf-8") as f:
+        return json.load(f)
+
 
 async def refresh_jwks() -> None:
     """Fetch JWKS from IAM and rebuild the in-memory key cache.
@@ -35,12 +74,7 @@ async def refresh_jwks() -> None:
     """
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(
-            timeout=10.0, proxy=settings.IAM_JWKS_PROXY or None,
-        ) as client:
-            response = await client.get(settings.IAM_JWKS_URL)
-            response.raise_for_status()
-            jwks = response.json()
+        jwks = await _fetch_jwks(settings.IAM_JWKS_URL, settings.IAM_JWKS_PROXY)
 
         new_cache: dict[str, Any] = {}
         for key_data in jwks.get("keys", []):
