@@ -15,6 +15,7 @@ from app.models.kb import (
     KBArticleStatus,
     KBArticleVersion,
     KBArticleVisibility,
+    KBChunk,
     KBSpace,
     TicketKBLink,
 )
@@ -434,6 +435,113 @@ class KBRepository(BaseRepository[KBArticle]):
 
         # Preserve cosine-distance order
         return [articles_by_id[aid] for aid in article_ids if aid in articles_by_id]
+
+    # ------------------------------------------------------------------
+    # Chunk search (KB_WIKI_CURATION_RAG_PLAN Phase 3)
+    # ------------------------------------------------------------------
+
+    async def _load_chunks_in_order(self, chunk_ids: list) -> list[KBChunk]:
+        if not chunk_ids:
+            return []
+        from sqlalchemy.orm import joinedload
+
+        result = await self.session.execute(
+            sa.select(KBChunk).options(joinedload(KBChunk.article)).where(KBChunk.id.in_(chunk_ids))
+        )
+        chunks_by_id = {c.id: c for c in result.unique().scalars().all()}
+        return [chunks_by_id[cid] for cid in chunk_ids if cid in chunks_by_id]
+
+    async def search_chunks(
+        self,
+        tenant_id: UUID,
+        query_embedding: list[float],
+        space_id: UUID | None = None,
+        limit: int = 5,
+        viewer_role: str = "end_user",
+    ) -> list[tuple[KBChunk, float]]:
+        """Authenticated chunk search — tenant + global (see _scope_sql).
+
+        tenant_id here follows the SAME "None = no filter, cross-tenant
+        platform view" semantics as every other scoped method in this repo —
+        it is NOT the anonymous path. Anonymous/global-only callers must use
+        search_chunks_global, which hardcodes tenant_id IS NULL and never
+        takes a tenant_id argument at all, so the two paths can't be confused
+        by a caller passing None.
+        """
+        visibility_filter = (
+            "" if viewer_role in _AGENT_ROLES else "AND c.visibility IN ('public', 'internal')"
+        )
+        space_filter = "AND c.space_id = :space_id" if space_id is not None else ""
+        scope_filter = (
+            "(c.tenant_id IS NULL OR c.tenant_id = :tenant_id)"
+            if tenant_id is not None
+            else "TRUE"
+        )
+
+        sql = text(
+            f"""
+            SELECT c.id, 1.0 - (c.embedding <=> CAST(:embedding AS vector)) AS score
+            FROM kb_chunks c
+            WHERE
+                {scope_filter}
+                AND c.embedding IS NOT NULL
+                {visibility_filter}
+                {space_filter}
+            ORDER BY c.embedding <=> CAST(:embedding AS vector)
+            LIMIT :lim
+            """  # noqa: S608 — visibility_filter/scope_filter are controlled literals, not user input
+        )
+        params: dict = {"embedding": str(query_embedding), "lim": limit}
+        if tenant_id is not None:
+            params["tenant_id"] = tenant_id
+        if space_id is not None:
+            params["space_id"] = space_id
+
+        result = await self.session.execute(sql, params)
+        rows = result.all()
+        chunk_ids = [row[0] for row in rows]
+        score_by_id = {row[0]: float(row[1]) for row in rows}
+
+        chunks = await self._load_chunks_in_order(chunk_ids)
+        return [(c, score_by_id[c.id]) for c in chunks]
+
+    async def search_chunks_global(
+        self,
+        query_embedding: list[float],
+        space_id: UUID | None = None,
+        limit: int = 5,
+    ) -> list[tuple[KBChunk, float]]:
+        """Anonymous chunk search — global (tenant_id IS NULL) + public only.
+
+        Never merges another tenant's content, regardless of caller input —
+        there is no tenant_id parameter to get wrong. This is the entire
+        security boundary for the unauthenticated /kb/chunks/search path.
+        """
+        space_filter = "AND c.space_id = :space_id" if space_id is not None else ""
+        sql = text(
+            f"""
+            SELECT c.id, 1.0 - (c.embedding <=> CAST(:embedding AS vector)) AS score
+            FROM kb_chunks c
+            WHERE
+                c.tenant_id IS NULL
+                AND c.visibility = 'public'
+                AND c.embedding IS NOT NULL
+                {space_filter}
+            ORDER BY c.embedding <=> CAST(:embedding AS vector)
+            LIMIT :lim
+            """  # noqa: S608 — space_filter is a controlled literal, not user input
+        )
+        params: dict = {"embedding": str(query_embedding), "lim": limit}
+        if space_id is not None:
+            params["space_id"] = space_id
+
+        result = await self.session.execute(sql, params)
+        rows = result.all()
+        chunk_ids = [row[0] for row in rows]
+        score_by_id = {row[0]: float(row[1]) for row in rows}
+
+        chunks = await self._load_chunks_in_order(chunk_ids)
+        return [(c, score_by_id[c.id]) for c in chunks]
 
     # ------------------------------------------------------------------
     # get_by_slug

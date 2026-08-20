@@ -1,11 +1,21 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 
 
 def get_engine():
     s = get_settings()
+    if s.IS_CELERY_WORKER:
+        # No pooling — every checkout opens a fresh connection bound to
+        # whichever event loop is asking, and it's closed (not returned to a
+        # pool) when released. See IS_CELERY_WORKER's docstring in config.py.
+        return create_async_engine(
+            s.DATABASE_URL,
+            poolclass=NullPool,
+            echo=s.APP_ENV == "development",
+        )
     return create_async_engine(
         s.DATABASE_URL,
         pool_size=s.DB_POOL_SIZE,

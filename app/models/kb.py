@@ -40,6 +40,7 @@ class KBArticleStatus(str, enum.Enum):
     under_review = "under_review"
     published = "published"
     archived = "archived"
+    ai_curated_pending_review = "ai_curated_pending_review"
 
 
 class KBArticleVisibility(str, enum.Enum):
@@ -283,6 +284,10 @@ class KBArticle(Base, TimestampMixin):
         default=dict,
         server_default=sa.text("'{}'::jsonb"),
     )
+    # Lineage for AI-curated drafts (KB_WIKI_CURATION_RAG_PLAN §4.4): which
+    # source produced this draft, citations, and reviewer notes on
+    # reject. NULL for human-authored articles.
+    curation_source: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
     # relationships
     space: Mapped["KBSpace"] = relationship("KBSpace", back_populates="articles")
@@ -361,6 +366,53 @@ class KBArticleVersion(Base):
 
     article: Mapped["KBArticle"] = relationship("KBArticle", back_populates="versions")
     changer: Mapped["User"] = relationship("User", foreign_keys=[changed_by])  # type: ignore[name-defined]
+
+
+# ---------------------------------------------------------------------------
+# KBChunk (KB_WIKI_CURATION_RAG_PLAN Phase 3) — heading-aware chunks of a
+# published article, embedded separately from the whole-article embedding on
+# KBArticle. tenant_id/space_id are denormalized from the parent article so
+# search queries can filter without a join.
+# ---------------------------------------------------------------------------
+
+
+class KBChunk(Base):
+    __tablename__ = "kb_chunks"
+    __table_args__ = (
+        sa.Index("ix_kb_chunks_article_id", "article_id"),
+        sa.Index("ix_kb_chunks_tenant_id", "tenant_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(sa.UUID(as_uuid=True), primary_key=True, default=uuid7)
+    article_id: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True),
+        sa.ForeignKey("kb_articles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tenant_id: Mapped[Optional[UUID]] = mapped_column(sa.UUID(as_uuid=True), nullable=True)
+    space_id: Mapped[UUID] = mapped_column(sa.UUID(as_uuid=True), nullable=False)
+    # Denormalized from the parent article (like tenant_id/space_id) so a
+    # visibility check doesn't require a join at query time. Chunks only
+    # exist for published articles (the chunking job skips others), so
+    # status doesn't need the same treatment.
+    visibility: Mapped[KBArticleVisibility] = mapped_column(
+        sa.Enum(KBArticleVisibility, name="kbarticlevisibility", create_type=False),
+        nullable=False,
+    )
+    chunk_index: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    heading: Mapped[Optional[str]] = mapped_column(sa.VARCHAR(500), nullable=True)
+    content: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    embedding: Mapped[Optional[object]] = mapped_column(
+        Vector(1536) if Vector is not None else sa.Text,
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        sa.TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+    )
+
+    article: Mapped["KBArticle"] = relationship("KBArticle")
 
 
 # ---------------------------------------------------------------------------

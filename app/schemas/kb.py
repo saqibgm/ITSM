@@ -219,6 +219,46 @@ class KBArticleResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Wiki curation (KB_WIKI_CURATION_RAG_PLAN Phase 1)
+# ---------------------------------------------------------------------------
+
+
+class TriggerKBCurationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: UUID
+    title: str = Field(min_length=3, max_length=500)
+    source_text: str = Field(min_length=10)
+    category_id: UUID | None = None
+    product_id: UUID | None = None
+
+
+class RejectKBCurationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_notes: str = Field(min_length=1)
+    # False (default) = Phase 1 behavior: archive immediately, no re-synthesis.
+    # True = Phase 2: resume the paused graph with these notes, regenerate
+    # sections, and pause again for another round of review.
+    resynthesize: bool = False
+
+
+class KBCurationDraftResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    tenant_id: UUID | None
+    space_id: UUID
+    title: str
+    status: KBArticleStatus
+    excerpt: str | None
+    body: str
+    curation_source: dict | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
 # Search
 # ---------------------------------------------------------------------------
 
@@ -227,6 +267,17 @@ class KBArticleSearchResult(BaseModel):
     article: KBArticleResponse
     score: float
     match_type: str  # "fts" | "semantic" | "hybrid"
+
+
+class KBChunkSearchResult(BaseModel):
+    """Focused-snippet search result (KB_WIKI_CURATION_RAG_PLAN Phase 3) — unlike
+    KBArticleSearchResult, carries actual chunk text, not just article metadata."""
+
+    article_id: UUID
+    article_title: str
+    heading: str | None
+    content: str
+    score: float
 
 
 # ---------------------------------------------------------------------------

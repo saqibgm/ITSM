@@ -81,6 +81,10 @@ def create_celery() -> Celery:
             "task": "app.workers.tasks_kb.auto_draft_kb_from_tickets",
             "schedule": crontab(hour=3, minute=30),  # 3:30 am UTC daily
         },
+        "cluster-kb-gaps": {
+            "task": "app.workers.tasks_kb.cluster_kb_gaps_and_draft",
+            "schedule": crontab(hour=4, minute=0),  # 4:00 am UTC daily
+        },
         "retry-failed-webhooks": {
             "task": "app.workers.tasks_webhooks.retry_failed_webhooks",
             "schedule": crontab(minute="*/5"),  # every 5 minutes

@@ -174,6 +174,38 @@ class KBService:
         return article
 
     # ------------------------------------------------------------------
+    # Reject an AI-curated draft (KB_WIKI_CURATION_RAG_PLAN Phase 1)
+    # ------------------------------------------------------------------
+
+    async def reject_curation_draft(
+        self,
+        article: KBArticle,
+        reviewer_notes: str,
+        db: AsyncSession,
+    ) -> KBArticle:
+        """Archive an ai_curated_pending_review draft with reviewer notes.
+
+        Does not loop back into re-synthesis (that needs the durable-pause
+        machinery LangGraph's checkpointer/interrupt() provides — Phase 2).
+        """
+        if article.status != KBArticleStatus.ai_curated_pending_review:
+            raise InvalidStateTransitionError(
+                article.status.value,
+                KBArticleStatus.archived.value,
+                [KBArticleStatus.ai_curated_pending_review.value],
+            )
+
+        source = dict(article.curation_source or {})
+        source["state"] = "rejected"
+        source["reviewer_notes"] = reviewer_notes
+        article.curation_source = source
+        article.status = KBArticleStatus.archived
+
+        await db.flush()
+        await db.refresh(article)
+        return article
+
+    # ------------------------------------------------------------------
     # Restore version
     # ------------------------------------------------------------------
 

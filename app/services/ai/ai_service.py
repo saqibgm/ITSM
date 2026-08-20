@@ -25,6 +25,8 @@ from typing import AsyncGenerator
 
 import anthropic
 import openai
+from google import genai
+from google.genai import types as genai_types
 
 from app.config import get_settings
 from app.exceptions import AIBudgetExhaustedError, ExternalServiceError
@@ -33,13 +35,26 @@ logger = logging.getLogger(__name__)
 
 
 class AIService:
-    """Thin, stateless wrapper around Anthropic and OpenAI async clients."""
+    """Thin, stateless wrapper around Anthropic, OpenAI, Gemini, and Groq async clients.
+
+    Deliberately holds NO client instances on self — every method constructs
+    its provider client fresh, per call. `ai_service` (bottom of this file)
+    is a module-level singleton, constructed once at import time and reused
+    across every Celery task's own separate `asyncio.run()` call in the same
+    worker process. A client instance attribute stored at __init__ time gets
+    reused across those calls too, and several of these SDKs' async clients
+    eagerly bind an httpx transport (or similar) to whatever event loop first
+    touches them — reused from a later, different asyncio.run() loop, that
+    either hangs silently (confirmed live with google-genai) or raises
+    "RuntimeError: Event loop is closed" once the client's own retry logic
+    fires (confirmed live with openai's embeddings client, 2026-08-19). This
+    bit app/database.py's SQLAlchemy engine too — fixed there via NullPool.
+    Constructing a client is cheap (no network call happens until the first
+    real request), so there's no real cost to doing it fresh every time.
+    """
 
     def __init__(self) -> None:
-        s = get_settings()
-        # API key values are never logged — they are only held in memory.
-        self.anthropic = anthropic.AsyncAnthropic(api_key=s.ANTHROPIC_API_KEY)
-        self.openai = openai.AsyncOpenAI(api_key=s.OPENAI_API_KEY)
+        pass
 
     # ------------------------------------------------------------------
     # Budget management
@@ -166,11 +181,13 @@ class AIService:
 
         Raises:
             AIBudgetExhaustedError: if monthly budget is exhausted.
-            ExternalServiceError("anthropic"): after all retries are
-                exhausted.
+            ExternalServiceError("anthropic" | "gemini" | "groq"): after all
+                retries are exhausted (provider depends on AI_PROVIDER).
         """
         await self.check_budget(tenant_id, redis)
         s = get_settings()
+        provider = s.AI_PROVIDER
+        model_name = {"gemini": s.GEMINI_MODEL, "groq": s.GROQ_MODEL}.get(provider, s.CLAUDE_MODEL)
 
         last_exc: Exception | None = None
         retry_delays = [0, 15, 60, 240]
@@ -179,22 +196,67 @@ class AIService:
             if delay:
                 await asyncio.sleep(delay)
             try:
-                response = await self.anthropic.messages.create(
-                    model=s.CLAUDE_MODEL,
-                    max_tokens=s.CLAUDE_MAX_TOKENS,
-                    system=system,
-                    messages=messages,
-                    timeout=s.CLAUDE_TIMEOUT_SECONDS,
-                )
-                text: str = response.content[0].text
+                if provider == "gemini":
+                    # Anthropic uses "assistant" for its own turns; Gemini
+                    # uses "model" — everything else about the shape is the
+                    # same one-message-per-turn structure.
+                    contents = [
+                        {
+                            "role": "model" if m["role"] == "assistant" else "user",
+                            "parts": [{"text": m["content"]}],
+                        }
+                        for m in messages
+                    ]
+                    # Fresh client per call — see __init__'s comment on why
+                    # this can't be a reused instance attribute here.
+                    gemini_client = genai.Client(api_key=s.GOOGLE_API_KEY)
+                    response = await gemini_client.aio.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=genai_types.GenerateContentConfig(
+                            system_instruction=system or None,
+                            max_output_tokens=s.GEMINI_MAX_OUTPUT_TOKENS,
+                        ),
+                    )
+                    text: str = response.text or ""
+                    usage = response.usage_metadata
+                    input_tokens = usage.prompt_token_count if usage else 0
+                    output_tokens = usage.candidates_token_count if usage else 0
+                elif provider == "groq":
+                    # OpenAI-compatible endpoint — same openai SDK, just a
+                    # different base_url/key. Fresh client per call, same
+                    # cross-event-loop reasoning as the Gemini branch above
+                    # (this client is never stored on self).
+                    groq_client = openai.AsyncOpenAI(api_key=s.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+                    groq_messages = ([{"role": "system", "content": system}] if system else []) + messages
+                    response = await groq_client.chat.completions.create(
+                        model=model_name,
+                        messages=groq_messages,
+                        max_tokens=s.CLAUDE_MAX_TOKENS,
+                    )
+                    text = response.choices[0].message.content or ""
+                    input_tokens = response.usage.prompt_tokens if response.usage else 0
+                    output_tokens = response.usage.completion_tokens if response.usage else 0
+                else:
+                    anthropic_client = anthropic.AsyncAnthropic(api_key=s.ANTHROPIC_API_KEY)
+                    response = await anthropic_client.messages.create(
+                        model=model_name,
+                        max_tokens=s.CLAUDE_MAX_TOKENS,
+                        system=system,
+                        messages=messages,
+                        timeout=s.CLAUDE_TIMEOUT_SECONDS,
+                    )
+                    text = response.content[0].text
+                    input_tokens = response.usage.input_tokens
+                    output_tokens = response.usage.output_tokens
 
                 await self.record_usage(
                     tenant_id,
                     redis,
-                    response.usage.input_tokens,
-                    response.usage.output_tokens,
+                    input_tokens,
+                    output_tokens,
                     feature,
-                    s.CLAUDE_MODEL,
+                    model_name,
                 )
                 return text
 
@@ -206,10 +268,11 @@ class AIService:
                         "tenant_id": str(tenant_id),
                         "attempt": attempt + 1,
                         "exception_type": type(exc).__name__,
+                        "provider": provider,
                     },
                 )
 
-        raise ExternalServiceError("anthropic") from last_exc
+        raise ExternalServiceError(provider) from last_exc
 
     # ------------------------------------------------------------------
     # Streaming Claude generation
@@ -252,7 +315,8 @@ class AIService:
         output_tokens: int = 0
 
         try:
-            async with self.anthropic.messages.stream(
+            anthropic_client = anthropic.AsyncAnthropic(api_key=s.ANTHROPIC_API_KEY)
+            async with anthropic_client.messages.stream(
                 model=resolved_model,
                 max_tokens=s.CLAUDE_MAX_TOKENS,
                 system=system_prompt,
@@ -307,7 +371,16 @@ class AIService:
         """
         s = get_settings()
         try:
-            response = await self.openai.embeddings.create(
+            # Fresh client per call — same cross-event-loop reasoning as the
+            # gemini/groq branches in generate(): self.openai is a
+            # module-level-singleton instance attribute reused across every
+            # Celery task's own separate asyncio.run() call in this worker
+            # process. Once a call needed its own internal retry (e.g. on a
+            # 429), that retry's internals stayed bound to a stale, since-
+            # closed event loop from an earlier task — raised "RuntimeError:
+            # Event loop is closed" (confirmed live, 2026-08-19).
+            client = openai.AsyncOpenAI(api_key=s.OPENAI_API_KEY)
+            response = await client.embeddings.create(
                 model=s.EMBEDDING_MODEL,
                 input=text,
                 dimensions=s.EMBEDDING_DIMENSIONS,

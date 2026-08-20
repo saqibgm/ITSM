@@ -27,6 +27,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://itsm_app:itsm_app_pass@db:5432/itsm_db
+      IS_CELERY_WORKER: "true"
     depends_on:
       - db
       - redis
@@ -39,6 +40,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://itsm_app:itsm_app_pass@db:5432/itsm_db
+      IS_CELERY_WORKER: "true"
     depends_on:
       - redis
 

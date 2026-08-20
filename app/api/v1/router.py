@@ -12,6 +12,8 @@ from app.api.v1.assets import (
 from app.api.v1.gdpr import router as gdpr_router
 from app.api.v1.health import router as health_router
 from app.api.v1.kb import router as kb_router
+from app.api.v1.kb_chunk_search import router as kb_chunk_search_router
+from app.api.v1.kb_curation import router as kb_curation_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.platform import router as platform_router
 from app.api.v1.reports import router as reports_router
@@ -64,6 +66,10 @@ router.include_router(vendors_router)           # /api/v1/vendors
 
 # Knowledge Base (S3.1) — /api/v1/kb
 router.include_router(kb_router)
+# KB wiki curation (KB_WIKI_CURATION_RAG_PLAN Phase 1) — /api/v1/kb/curation
+router.include_router(kb_curation_router)
+# KB chunk search (KB_WIKI_CURATION_RAG_PLAN Phase 3) — /api/v1/kb/chunks/search
+router.include_router(kb_chunk_search_router)
 
 # Platform API (S4.1) — /api/v1/platform/...
 router.include_router(platform_router, prefix="/platform")
