@@ -218,6 +218,36 @@ def auto_draft_kb_from_tickets(self) -> None:  # type: ignore[override]
     asyncio.run(_auto_draft_kb_from_tickets_async())
 
 
+def build_ticket_kb_draft_source(ticket) -> tuple[str, str]:
+    """Build (source_title, source_text) for a KB draft from a resolved ticket.
+
+    Shared by the nightly auto_draft_kb_from_tickets batch and the manual
+    "Draft KB Article" ticket-page trigger (POST /kb/curation/from-ticket) —
+    keep both in sync rather than duplicating this. Expects ticket.category
+    to already be loaded (joinedload) if present.
+    """
+    resolution_note = ""
+    if hasattr(ticket, "resolution_note") and ticket.resolution_note:
+        resolution_note = ticket.resolution_note
+
+    category_name = ""
+    try:
+        if ticket.category is not None:
+            category_name = ticket.category.name
+    except Exception:
+        pass  # category may not be loaded; skip gracefully
+
+    source_title = ticket.title[:500]
+    source_text = (
+        f"Ticket ID: {ticket.id}\n"
+        f"Title: {ticket.title}\n"
+        f"Description: {ticket.description}\n"
+        f"Category: {category_name or 'N/A'}\n"
+        f"Resolution note: {resolution_note or 'No resolution note provided.'}"
+    )
+    return source_title, source_text
+
+
 async def _auto_draft_kb_from_tickets_async() -> None:
     """Async implementation of auto_draft_kb_from_tickets.
 
@@ -298,27 +328,7 @@ async def _auto_draft_kb_from_tickets_async() -> None:
 
                 for ticket in tickets:
                     tickets_processed += 1
-                    resolution_note: str = ""
-                    # resolution_note field may not exist on all ticket models;
-                    # access defensively
-                    if hasattr(ticket, "resolution_note") and ticket.resolution_note:
-                        resolution_note = ticket.resolution_note
-
-                    category_name = ""
-                    try:
-                        if ticket.category is not None:
-                            category_name = ticket.category.name
-                    except Exception:
-                        pass  # category may not be loaded; skip gracefully
-
-                    source_title = ticket.title[:500]
-                    source_text = (
-                        f"Ticket ID: {ticket.id}\n"
-                        f"Title: {ticket.title}\n"
-                        f"Description: {ticket.description}\n"
-                        f"Category: {category_name or 'N/A'}\n"
-                        f"Resolution note: {resolution_note or 'No resolution note provided.'}"
-                    )
+                    source_title, source_text = build_ticket_kb_draft_source(ticket)
 
                     # Determine author_id: prefer ticket assignee, fall back to requester
                     author_id = ticket.assignee_id or ticket.requester_id

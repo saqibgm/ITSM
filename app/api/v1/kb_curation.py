@@ -35,11 +35,14 @@ from app.api.v1.kb import (
     _resolve_article_scope,
     _service,
 )
+from app.api.v1.tickets import _resolve_list_scope
 from app.auth.dependencies import CurrentUser, get_current_user
 from app.database import get_db
-from app.exceptions import ResourceNotFoundError
-from app.models.kb import KBArticle, KBArticleAccessLevel, KBArticleStatus, KBArticleVisibility, KBSpace
+from app.exceptions import ResourceNotFoundError, ValidationError
+from app.models.kb import KBArticle, KBArticleAccessLevel, KBArticleStatus, KBArticleVisibility, KBSpace, TicketKBLink
+from app.models.ticket import TicketStatus
 from app.repositories.kb_repo import KBRepository
+from app.repositories.ticket_repo import TicketRepository
 from app.schemas.kb import (
     KBCurationDraftResponse,
     RejectKBCurationRequest,
@@ -109,6 +112,101 @@ async def trigger_curation(
     await db.refresh(article)
 
     from app.workers.tasks_kb import run_kb_curation
+    run_kb_curation.delay(str(article.id))
+
+    return KBCurationDraftResponse.model_validate(article)
+
+
+@router.post("/from-ticket/{ticket_id}", response_model=KBCurationDraftResponse, status_code=status.HTTP_202_ACCEPTED)
+async def trigger_curation_from_ticket(
+    ticket_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> KBCurationDraftResponse:
+    """Draft a KB article from a resolved ticket right now (agent+), instead of
+    waiting for the nightly auto_draft_kb_from_tickets batch (03:30 UTC).
+
+    Idempotent: if this ticket already has a KBArticle linked (from an
+    earlier manual trigger or the nightly batch), returns that draft as-is —
+    never creates a duplicate or re-runs curation. Response status is 202 for
+    a fresh draft, 200 when returning an existing one (FastAPI reports the
+    decorator's 202 either way; callers should key off body.state instead).
+    """
+    if current_user.tier != "platform":
+        _require_tenant(current_user)
+    _require_any_role(current_user, _AGENT_ROLES, "draft a KB article from this ticket")
+
+    tenant_id = _resolve_list_scope(current_user)
+    ticket_repo = TicketRepository(db)
+    ticket = await ticket_repo.get_or_404(ticket_id, tenant_id)
+
+    if ticket.status != TicketStatus.resolved:
+        raise ValidationError("Ticket must be resolved before drafting a KB article")
+
+    existing_link = (await db.execute(
+        select(TicketKBLink).where(TicketKBLink.ticket_id == ticket.id)
+    )).scalar_one_or_none()
+    if existing_link is not None:
+        existing_article = (await db.execute(
+            select(KBArticle).where(KBArticle.id == existing_link.article_id)
+        )).scalar_one_or_none()
+        if existing_article is not None:
+            return KBCurationDraftResponse.model_validate(existing_article)
+
+    space_result = await db.execute(
+        select(KBSpace)
+        .where(KBSpace.tenant_id == ticket.tenant_id, KBSpace.is_active.is_(True))
+        .order_by(KBSpace.created_at.asc())
+        .limit(1)
+    )
+    space = space_result.scalar_one_or_none()
+    if space is None:
+        raise ResourceNotFoundError("kb_space", "no active KB space configured for this tenant")
+
+    from sqlalchemy.orm import joinedload
+
+    from app.models.ticket import Ticket
+    from app.workers.tasks_kb import build_ticket_kb_draft_source, run_kb_curation
+
+    ticket_result = await db.execute(
+        select(Ticket).options(joinedload(Ticket.category)).where(Ticket.id == ticket.id)
+    )
+    ticket_with_category = ticket_result.unique().scalar_one()
+    source_title, source_text = build_ticket_kb_draft_source(ticket_with_category)
+
+    slug = await _service.make_unique_slug(source_title, space.id, ticket.tenant_id, db)
+
+    article = KBArticle(
+        tenant_id=ticket.tenant_id,
+        space_id=space.id,
+        title=source_title,
+        slug=slug,
+        body="",
+        status=KBArticleStatus.ai_curated_pending_review,
+        visibility=KBArticleVisibility.internal,
+        author_id=ticket.assignee_id or ticket.requester_id,
+        curation_source={
+            "trigger": "ticket_resolved",
+            "state": "running",
+            "source_title": source_title,
+            "source_text": source_text,
+            "source_ticket_id": str(ticket.id),
+            "triggered_by": str(current_user.local_user_id) if current_user.local_user_id else None,
+        },
+    )
+    db.add(article)
+    await db.flush()
+
+    link = TicketKBLink(
+        ticket_id=ticket.id,
+        article_id=article.id,
+        linked_by=current_user.local_user_id,
+        is_suggested=True,
+    )
+    db.add(link)
+    await db.commit()
+    await db.refresh(article)
+
     run_kb_curation.delay(str(article.id))
 
     return KBCurationDraftResponse.model_validate(article)
