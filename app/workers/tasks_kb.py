@@ -402,9 +402,18 @@ async def _auto_draft_kb_from_tickets_async() -> None:
     queue="low",
     bind=True,
     max_retries=1,
+    soft_time_limit=180,
+    time_limit=210,
 )
 def run_kb_curation(self, article_id: str) -> None:  # type: ignore[override]
-    """Run the STORM synthesis subgraph for one pending curation draft."""
+    """Run the STORM synthesis subgraph for one pending curation draft.
+
+    A hung upstream LLM call (no per-call timeout in the AI provider chain)
+    would otherwise leave the draft stuck in "running" forever with no
+    self-healing — the soft limit raises inside the task so the except
+    branch in _run_kb_curation_async can still record a "failed" state
+    before the hard limit kills the process.
+    """
     asyncio.run(_run_kb_curation_async(article_id))
 
 
