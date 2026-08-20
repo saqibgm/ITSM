@@ -49,12 +49,12 @@ async def _run_maintenance_predictions_async() -> None:
     from app.models.asset import Asset, AssetStatus
     from app.models.identity import Tenant
     from app.models.notification import Notification, NotificationType
-    from app.redis_client import redis_client
+    from app.redis_client import get_worker_redis_client
     from app.services.ai.maintenance_predictor import MaintenancePredictor
 
     s = get_settings()
     batch_size = s.AI_MAINTENANCE_BATCH_SIZE
-    redis = redis_client
+    redis = get_worker_redis_client()
     predictor = MaintenancePredictor()
 
     # Statuses that are considered "active" for maintenance prediction

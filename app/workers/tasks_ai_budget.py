@@ -47,10 +47,10 @@ def flush_daily_usage() -> None:
 
 async def _flush_daily_usage_async() -> None:
     from app.database import AsyncSessionLocal
-    from app.redis_client import redis_client
+    from app.redis_client import get_worker_redis_client
     from sqlalchemy import text
 
-    redis = redis_client
+    redis = get_worker_redis_client()
 
     # Scan all ai_usage:* keys
     pattern = "ai_usage:*"

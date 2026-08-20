@@ -68,8 +68,10 @@ async def _async_rca_due_soon_scan() -> None:
     from app.database import AsyncSessionLocal
     from app.models.notification import NotificationType
     from app.models.retro import IncidentRetrospective
-    from app.redis_client import redis_client
+    from app.redis_client import get_worker_redis_client
     from app.services.notification_service import NotificationService
+
+    redis_client = get_worker_redis_client()
 
     async with AsyncSessionLocal() as db:
         due_soon = (await db.execute(

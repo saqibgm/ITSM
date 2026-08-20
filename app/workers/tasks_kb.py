@@ -82,13 +82,13 @@ async def _refresh_kb_embeddings_async() -> None:
     from app.config import get_settings
     from app.database import AsyncSessionLocal
     from app.models.kb import KBArticle, KBArticleStatus, KBChunk
-    from app.redis_client import redis_client
+    from app.redis_client import get_worker_redis_client
     from app.services.ai.ai_service import AIService
     from app.services.ai.embedder import EmbedderService
     from app.services.ai.kb_chunker import chunk_article
 
     s = get_settings()
-    redis = redis_client
+    redis = get_worker_redis_client()
     openai_client = openai_sdk.AsyncOpenAI(api_key=s.OPENAI_API_KEY)
     embedder = EmbedderService(openai_client=openai_client, redis=redis)
 
@@ -423,13 +423,13 @@ async def _run_kb_curation_async(article_id: str) -> None:
 
     from app.database import AsyncSessionLocal
     from app.models.kb import KBArticle, KBArticleStatus
-    from app.redis_client import redis_client
+    from app.redis_client import get_worker_redis_client
     from app.repositories.kb_repo import KBRepository
     from app.services.ai.ai_service import AIService
     from app.services.ai.kb_curation_checkpointer import get_checkpointer
     from app.services.ai.kb_curator import KBCurator
 
-    redis = redis_client
+    redis = get_worker_redis_client()
     ai_service = AIService()
 
     async with AsyncSessionLocal() as db:
@@ -548,13 +548,13 @@ async def _resume_kb_curation_async(article_id: str, decision: str, notes: str |
 
     from app.database import AsyncSessionLocal
     from app.models.kb import KBArticle, KBArticleStatus
-    from app.redis_client import redis_client
+    from app.redis_client import get_worker_redis_client
     from app.services.ai.ai_service import AIService
     from app.services.ai.kb_curation_checkpointer import get_checkpointer
     from app.services.ai.kb_curator import KBCurator
     from app.services.kb_service import KBService
 
-    redis = redis_client
+    redis = get_worker_redis_client()
     ai_service = AIService()
     kb_service = KBService()
 
@@ -664,14 +664,14 @@ async def _cluster_kb_gaps_and_draft_async() -> None:
     from app.database import AsyncSessionLocal
     from app.models.identity import Tenant
     from app.models.kb import KBArticle, KBArticleStatus, KBArticleVisibility, KBSpace
-    from app.redis_client import redis_client
+    from app.redis_client import get_worker_redis_client
     from app.services.ai.ai_service import AIService
     from app.services.ai.embedder import EmbedderService
     from app.services.ai.kb_gap_clusterer import cluster_gaps
     from app.services.kb_service import KBService
 
     s = get_settings()
-    redis = redis_client
+    redis = get_worker_redis_client()
     openai_client = openai_sdk.AsyncOpenAI(api_key=s.OPENAI_API_KEY)
     embedder = EmbedderService(openai_client=openai_client, redis=redis)
     kb_service = KBService()

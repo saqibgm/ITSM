@@ -29,14 +29,14 @@ async def _async_generate_summary(recording_id: str) -> None:
 
     from app.database import AsyncSessionLocal
     from app.models.recording import SupportRecording
-    from app.redis_client import redis_client
+    from app.redis_client import get_worker_redis_client
     from app.services import recording_service
 
     async with AsyncSessionLocal() as db:
         rec = (await db.execute(select(SupportRecording).where(SupportRecording.id == UUID(recording_id)))).scalar_one_or_none()
         if rec is None:
             return
-        await recording_service.generate_recording_summary(db, rec.tenant_id, rec, redis_client)
+        await recording_service.generate_recording_summary(db, rec.tenant_id, rec, get_worker_redis_client())
         await db.commit()
 
 

@@ -61,7 +61,7 @@ async def _process_new_ticket_async(ticket_id: str, tenant_id: str) -> None:
     from app.database import AsyncSessionLocal
     from app.models.ticket import Ticket, TicketCategory
     from app.models.identity import Team
-    from app.redis_client import redis_client
+    from app.redis_client import get_worker_redis_client
     from app.services.ai.ai_service import AIService
     from app.services.ai.embedder import EmbedderService
     from app.services.ai.duplicate_detector import DuplicateDetector
@@ -72,7 +72,7 @@ async def _process_new_ticket_async(ticket_id: str, tenant_id: str) -> None:
     ticket_uuid = UUID(ticket_id)
     tenant_uuid = UUID(tenant_id)
 
-    redis = redis_client
+    redis = get_worker_redis_client()
     ai_service = AIService()
     openai_client = openai_sdk.AsyncOpenAI(api_key=s.OPENAI_API_KEY)
     embedder = EmbedderService(openai_client=openai_client, redis=redis)
