@@ -17,6 +17,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.internal_assertion import try_verify_internal_assertion
 from app.auth.jwks import verify_token
 from app.config import get_settings
 from app.database import get_db
@@ -240,8 +241,13 @@ async def get_current_user(
     if not token:
         raise AuthenticationError("Authorization token is required")
 
+    # try_verify_internal_assertion() returns None for anything that isn't
+    # unambiguously Project-IQ-V2's WhatsApp assertion shape (see that
+    # module's docstring for the two discriminators) — every other caller,
+    # including every real Keycloak-issued token, falls through to the
+    # exact same verify_token() call as before this existed.
     # Verify signature, expiry, issuer, audience — never log the token value
-    payload = verify_token(token)
+    payload = try_verify_internal_assertion(token) or verify_token(token)
 
     settings = get_settings()
 

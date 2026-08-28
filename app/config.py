@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     IAM_INTERNAL_TOKEN: str = ""
     PLATFORM_ORG_ID: str
 
+    # Shared secret with Project-IQ-V2's WhatsApp integration — see
+    # app/auth/internal_assertion.py. Blank (default) disables that path
+    # entirely; every request then goes through normal Keycloak verification
+    # exactly as before this existed. Never log it.
+    WHATSAPP_INTERNAL_ASSERTION_SECRET: str = ""
+
     STORAGE_ENDPOINT: str = "http://localhost:9000"
     # Browser-reachable endpoint used when SIGNING presigned URLs. Defaults to
     # STORAGE_ENDPOINT; set this when the internal endpoint (e.g. docker
