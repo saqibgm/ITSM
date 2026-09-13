@@ -119,6 +119,19 @@ class Settings(BaseSettings):
     SENTRY_DSN: str = ""
     OTEL_EXPORTER_OTLP_ENDPOINT: str = ""
 
+    # Native marketplace integration (V3-Marketplaces) — Shopify connector,
+    # docs/plans/NATIVE_MARKETPLACE_CONNECTORS_PLAN.md §5 pilot batch.
+    # One Shopify "app" (these credentials) shared across every tenant that
+    # connects a store, same model as Project-IQ-V2's existing Shopify
+    # integration — each tenant's own shop_domain/tokens live in
+    # MarketplaceConnection, not here.
+    SHOPIFY_ENABLED: bool = False
+    SHOPIFY_CLIENT_ID: str = ""
+    SHOPIFY_CLIENT_SECRET: str = ""
+    SHOPIFY_REDIRECT_URI: str = ""
+    SHOPIFY_SCOPES: str = "read_orders,read_returns"
+    SHOPIFY_API_VERSION: str = "2026-01"
+
     # Observability / hardening (S4.2)
     RATE_LIMIT_PER_MINUTE: int = 60
     RATE_LIMIT_BURST: int = 10
