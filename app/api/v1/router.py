@@ -39,6 +39,7 @@ from app.api.v1.rca import router as rca_router
 from app.api.v1.rca_admin import router as rca_admin_router
 from app.api.v1.rca_dashboards import router as rca_dashboards_router
 from app.api.v1.marketplace_shopify import router as marketplace_shopify_router, webhook_router as marketplace_shopify_webhook_router
+from app.api.v1.marketplace_amazon import router as marketplace_amazon_router
 
 router = APIRouter()
 
@@ -131,6 +132,7 @@ router.include_router(rca_router, prefix="/rca")        # /api/v1/rca/*
 router.include_router(rca_admin_router)                 # /api/v1/tenant/rca-policies/*, /tenant/recording-policies
 router.include_router(rca_dashboards_router)            # /api/v1/dashboards/rca/*
 
-# Native marketplace integration (V3-Marketplaces) — /api/v1/marketplaces/shopify/*
+# Native marketplace integration (V3-Marketplaces) — /api/v1/marketplaces/{provider}/*
 router.include_router(marketplace_shopify_router)
 router.include_router(marketplace_shopify_webhook_router)  # /api/v1/webhooks/marketplace/shopify (UNAUTH — HMAC-verified)
+router.include_router(marketplace_amazon_router)  # no webhook route — Amazon has none, see connectors/amazon.py

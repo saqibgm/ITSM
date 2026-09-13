@@ -132,6 +132,14 @@ class Settings(BaseSettings):
     SHOPIFY_SCOPES: str = "read_orders,read_returns"
     SHOPIFY_API_VERSION: str = "2026-01"
 
+    # Native marketplace integration — Amazon connector (pilot batch #2)
+    AMAZON_ENABLED: bool = False
+    AMAZON_APP_ID: str = ""
+    AMAZON_CLIENT_ID: str = ""
+    AMAZON_CLIENT_SECRET: str = ""
+    AMAZON_MARKETPLACE_IDS: str = ""  # comma-separated, e.g. "ATVPDKIKX0DER" (US)
+    AMAZON_ENVIRONMENT: str = "sandbox"  # 'sandbox' | 'production'
+
     # Observability / hardening (S4.2)
     RATE_LIMIT_PER_MINUTE: int = 60
     RATE_LIMIT_BURST: int = 10
