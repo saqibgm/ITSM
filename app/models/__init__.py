@@ -160,6 +160,13 @@ from app.models.slo import (
 )
 from app.models.virtual_agent import VirtualAgentMessage, VirtualAgentSession
 from app.models.webhook import WebhookDelivery, WebhookEndpoint
+from app.models.marketplace import (
+    MarketplaceConnection,
+    MarketplaceEvent,
+    MarketplaceIntegrationSettings,
+    MarketplaceOrder,
+    MarketplaceOrderTicketLink,
+)
 
 __all__ = [
     "Base",
@@ -326,4 +333,10 @@ __all__ = [
     # outbound webhooks
     "WebhookEndpoint",
     "WebhookDelivery",
+    # native marketplace integration (V3-Marketplaces)
+    "MarketplaceConnection",
+    "MarketplaceEvent",
+    "MarketplaceOrder",
+    "MarketplaceOrderTicketLink",
+    "MarketplaceIntegrationSettings",
 ]
