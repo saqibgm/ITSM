@@ -180,6 +180,12 @@ class MarketplaceOrder(Base, TimestampMixin, TenantScopedMixin):
         sa.VARCHAR(320), nullable=True,
         comment="PII — encrypt at rest before production use (SHOPIFY_INTEGRATION_PLAN.md §4.6 precedent)",
     )
+    buyer_name: Mapped[Optional[str]] = mapped_column(
+        sa.VARCHAR(255), nullable=True,
+        comment="PII — added 2026-09-14, same encrypt-at-rest note as buyer_email. Display name for the "
+                "frontend's Buyer column; email alone is frequently unavailable (Amazon needs PII/RDT "
+                "access, eBay doesn't expose it at all — eBay populates this with the buyer's username instead).",
+    )
     order_lines: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=sa.text("'[]'::jsonb"))
     total_amount: Mapped[Optional[float]] = mapped_column(sa.Numeric(12, 2), nullable=True)
     currency: Mapped[Optional[str]] = mapped_column(sa.VARCHAR(3), nullable=True)

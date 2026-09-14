@@ -58,6 +58,28 @@ _SANDBOX_BASE_URL = "https://sandbox.sellingpartnerapi-na.amazon.com"
 _PRODUCTION_BASE_URL = "https://sellingpartnerapi-na.amazon.com"
 _LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token"
 
+# Maps SP-API's OrderStatus onto NormalizedOrder's documented
+# 'new'|'acknowledged'|'shipped'|'delivered'|'cancelled' set (base.py) — was
+# just lowercasing the raw Amazon value before (2026-09-14 fix), which
+# doesn't match any of the 5 canonical values the frontend's status filter/
+# badges actually expect. Amazon's Orders API has no 'delivered' signal at
+# this level (that needs a separate Tracking API call per shipment) —
+# nothing maps to it here, same honest gap as eBay's status mapping.
+_AMAZON_STATUS_MAP = {
+    "PENDING": "new",
+    "PENDINGAVAILABILITY": "new",
+    "INVOICEUNCONFIRMED": "new",
+    "UNSHIPPED": "acknowledged",
+    "PARTIALLYSHIPPED": "acknowledged",
+    "UNFULFILLABLE": "acknowledged",
+    "SHIPPED": "shipped",
+    "CANCELED": "cancelled",
+}
+
+
+def _map_amazon_status(raw_order_status: Optional[str]) -> str:
+    return _AMAZON_STATUS_MAP.get((raw_order_status or "").upper(), "new")
+
 
 class AmazonConnector(CommerceConnector):
     provider = "amazon"
@@ -234,10 +256,24 @@ class AmazonConnector(CommerceConnector):
             total = order.get("OrderTotal") or {}
             results.append(NormalizedOrder(
                 external_order_id=order.get("AmazonOrderId"),
-                status=(order.get("OrderStatus") or "new").lower(),
+                status=_map_amazon_status(order.get("OrderStatus")),
                 order_lines=[],  # getOrderItems is a separate call — not fetched here to avoid N+1; add if a mapping needs line-item detail
                 total_amount=float(total["Amount"]) if total.get("Amount") else None,
                 currency=total.get("CurrencyCode"),
+                # BuyerInfo.BuyerEmail only appears in the GetOrders response
+                # when the app has PII access approved AND the call is made
+                # with a Restricted Data Token (a separate createRestrictedDataToken
+                # exchange, not implemented here) instead of the normal access
+                # token this connector uses. Left as a best-effort .get() —
+                # will stay empty in sandbox regardless (confirmed live,
+                # 2026-09-14: the sandbox mock order has no BuyerInfo key at
+                # all) and in production until that RDT flow is built.
+                buyer_email=(order.get("BuyerInfo") or {}).get("BuyerEmail"),
+                # BuyerInfo.BuyerName has historically been less restricted
+                # than BuyerEmail on SP-API, but still absent from this
+                # sandbox's mock response — same "will populate in
+                # production, not sandbox" caveat as buyer_email above.
+                buyer_name=(order.get("BuyerInfo") or {}).get("BuyerName"),
                 placed_at=datetime.fromisoformat(order["PurchaseDate"]) if order.get("PurchaseDate") else None,
                 raw_metadata=order,
             ))

@@ -62,6 +62,26 @@ logger = logging.getLogger(__name__)
 # leaves much less room for request latency to eat into validity.
 _REFRESH_SKEW = timedelta(minutes=3)
 
+# Maps Walmart's orderLineStatus onto NormalizedOrder's documented
+# 'new'|'acknowledged'|'shipped'|'delivered'|'cancelled' set (base.py) —
+# Walmart's own vocabulary happens to overlap almost exactly (unlike
+# Shopify/Amazon/eBay, which needed a real translation table), but "Created"
+# and "Refund" don't match anything in the canonical set as-is (2026-09-14
+# fix) — was just lowercasing the raw value and storing "created"/"refund"
+# directly, neither of which the frontend's status filter/badges recognize.
+_WALMART_STATUS_MAP = {
+    "CREATED": "new",
+    "ACKNOWLEDGED": "acknowledged",
+    "SHIPPED": "shipped",
+    "DELIVERED": "delivered",
+    "CANCELLED": "cancelled",
+    "REFUND": "cancelled",
+}
+
+
+def _map_walmart_status(raw_order_line_status) -> str:
+    return _WALMART_STATUS_MAP.get((raw_order_line_status or "").upper(), "new")
+
 
 def _base_urls(environment: str) -> tuple[str, str]:
     """Returns (token_url, api_base) — confirmed via direct doc verification
@@ -181,13 +201,16 @@ class WalmartConnector(CommerceConnector):
         for order in (body.get("list", {}).get("elements", {}).get("order") or []):
             results.append(NormalizedOrder(
                 external_order_id=order.get("purchaseOrderId"),
-                status=(order.get("orderLines", {}).get("orderLine", [{}])[0].get("orderLineStatuses", {})
-                        .get("orderLineStatus", [{}])[0].get("status", "new")).lower(),
+                status=_map_walmart_status(
+                    order.get("orderLines", {}).get("orderLine", [{}])[0]
+                    .get("orderLineStatuses", {}).get("orderLineStatus", [{}])[0].get("status")
+                ),
                 order_lines=[
                     {"title": ol.get("item", {}).get("productName"), "quantity": ol.get("orderLineQuantity", {}).get("amount")}
                     for ol in order.get("orderLines", {}).get("orderLine", [])
                 ],
                 buyer_email=(order.get("shippingInfo") or {}).get("email"),
+                buyer_name=((order.get("shippingInfo") or {}).get("postalAddress") or {}).get("name"),
                 placed_at=datetime.fromtimestamp(order["orderDate"] / 1000, tz=timezone.utc) if order.get("orderDate") else None,
                 raw_metadata=order,
             ))

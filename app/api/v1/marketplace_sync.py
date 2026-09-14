@@ -93,6 +93,7 @@ async def list_marketplace_orders(
                 "total_amount": float(o.total_amount) if o.total_amount is not None else None,
                 "currency": o.currency,
                 "buyer_email": o.buyer_email,
+                "buyer_name": o.buyer_name,
                 "placed_at": o.placed_at.isoformat() if o.placed_at else None,
                 "updated_at": o.updated_at.isoformat(),
             }

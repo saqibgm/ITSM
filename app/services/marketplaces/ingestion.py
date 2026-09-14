@@ -63,6 +63,7 @@ async def map_order(
         existing.total_amount = order.total_amount
         existing.currency = order.currency
         existing.buyer_email = order.buyer_email or existing.buyer_email
+        existing.buyer_name = order.buyer_name or existing.buyer_name
         existing.raw_metadata = order.raw_metadata
         return existing
 
@@ -73,6 +74,7 @@ async def map_order(
         external_order_id=order.external_order_id,
         status=order.status,
         buyer_email=order.buyer_email,
+        buyer_name=order.buyer_name,
         order_lines=order.order_lines,
         total_amount=order.total_amount,
         currency=order.currency,

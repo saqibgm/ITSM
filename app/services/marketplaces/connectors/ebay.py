@@ -48,6 +48,24 @@ logger = logging.getLogger(__name__)
 
 _REFRESH_SKEW = timedelta(minutes=5)
 
+# Maps eBay's orderFulfillmentStatus onto NormalizedOrder's documented
+# 'new'|'acknowledged'|'shipped'|'delivered'|'cancelled' set (base.py) — was
+# just lowercasing the raw eBay value before (2026-09-14 fix), which doesn't
+# match any of the 5 canonical values the frontend's status filter/badges
+# actually expect. eBay's Fulfillment API order object has no
+# 'delivered'/'cancelled' signal at this field — cancellations live in the
+# separate Post-Order API case model — so nothing maps to those here, same
+# honest gap as Amazon's status mapping.
+_EBAY_STATUS_MAP = {
+    "NOT_STARTED": "new",
+    "IN_PROGRESS": "acknowledged",
+    "FULFILLED": "shipped",
+}
+
+
+def _map_ebay_status(raw_fulfillment_status) -> str:
+    return _EBAY_STATUS_MAP.get((raw_fulfillment_status or "").upper(), "new")
+
 
 def _base_urls(environment: str) -> tuple[str, str]:
     """Returns (authorize_base, api_base).
@@ -165,7 +183,16 @@ class EbayConnector(CommerceConnector):
             return []
         settings = get_settings()
         _, api_base = _base_urls(settings.EBAY_ENVIRONMENT)
-        filter_parts = [f"creationdate:[{(since or datetime.now(timezone.utc) - timedelta(days=30)).isoformat()}..]"]
+        # eBay's Fulfillment API date filter needs a literal 'Z' suffix and
+        # no microseconds/offset — Python's plain .isoformat() on a tz-aware
+        # datetime instead produces "+00:00" (and microseconds, if nonzero),
+        # which eBay rejects outright with error 30810 "Invalid date format"
+        # (confirmed live, 2026-09-14: the sandbox order query 400'd with
+        # exactly that error the first time this ran end-to-end). Same class
+        # of "docs say ISO 8601 but the real API is stricter" issue already
+        # hit with Amazon's CreatedAfter earlier in this same build.
+        creation_date = (since or datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        filter_parts = [f"creationdate:[{creation_date}..]"]
         client = await self._get_client()
         try:
             resp = await client.get(
@@ -186,14 +213,19 @@ class EbayConnector(CommerceConnector):
             total = (order.get("pricingSummary") or {}).get("total") or {}
             results.append(NormalizedOrder(
                 external_order_id=order.get("orderId"),
-                status=(order.get("orderFulfillmentStatus") or "new").lower(),
+                status=_map_ebay_status(order.get("orderFulfillmentStatus")),
                 order_lines=[
                     {"title": li.get("lineItemId"), "quantity": li.get("quantity")}
                     for li in order.get("lineItems", [])
                 ],
                 total_amount=float(total["value"]) if total.get("value") else None,
                 currency=total.get("currency"),
-                buyer_email=(order.get("buyer") or {}).get("username"),  # eBay doesn't expose buyer email directly; username is the durable identifier
+                # eBay's Fulfillment API doesn't expose a real buyer email at
+                # all (confirmed via docs) — was being stored in buyer_email
+                # before this fix (2026-09-14), mislabeling a username as an
+                # email. buyer_name is the honest field for it; buyer_email
+                # stays unset (None) for eBay orders.
+                buyer_name=(order.get("buyer") or {}).get("username"),
                 placed_at=datetime.fromisoformat(order["creationDate"]) if order.get("creationDate") else None,
                 raw_metadata=order,
             ))

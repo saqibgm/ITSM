@@ -39,6 +39,12 @@ class NormalizedOrder:
     total_amount: Optional[float] = None
     currency: Optional[str] = None
     buyer_email: Optional[str] = None
+    # Added 2026-09-14 — the frontend's "Buyer" column needs a display name,
+    # not just an email; email alone is also frequently unavailable (Amazon
+    # needs separate PII/RDT access, eBay doesn't expose it at all — see
+    # ebay.py's fetch_orders, which was actually storing eBay's USERNAME in
+    # buyer_email before this fix, not a real email address).
+    buyer_name: Optional[str] = None
     placed_at: Optional[datetime] = None
     raw_metadata: dict = field(default_factory=dict)
 

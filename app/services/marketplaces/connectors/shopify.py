@@ -52,6 +52,48 @@ logger = logging.getLogger(__name__)
 
 _REFRESH_SKEW = timedelta(minutes=5)
 
+# Maps Shopify's own fulfillment-status vocabulary onto NormalizedOrder's
+# documented 'new'|'acknowledged'|'shipped'|'delivered'|'cancelled' set
+# (base.py) — a real gap found via live testing (2026-09-14): fetch_orders()
+# and normalize_event() were both just lowercasing the raw Shopify value and
+# storing it as-is ("unfulfilled", "fulfilled", ...), which matches NONE of
+# the 5 canonical values the rest of the system (frontend status filter,
+# badge colors) actually expects. Covers both spellings Shopify uses for the
+# same concept — GraphQL's UPPER_SNAKE_CASE enum (displayFulfillmentStatus,
+# used by fetch_orders) and REST webhooks' distinct lowercase strings
+# (fulfillment_status, used by normalize_event) — by uppercasing whatever
+# comes in before lookup. Shopify has no order-level 'delivered' signal
+# without a separate tracking-events lookup, so nothing maps to it here;
+# cancellation is a separate cancelled_at/cancelledAt field, not a
+# fulfillment-status value, so callers pass that in separately.
+_SHOPIFY_STATUS_MAP = {
+    "FULFILLED": "shipped",
+    "IN_PROGRESS": "acknowledged",
+    "PARTIALLY_FULFILLED": "acknowledged",
+    "PARTIAL": "acknowledged",  # REST webhook spelling of the same state
+    "RESTOCKED": "cancelled",
+    "UNFULFILLED": "new",
+    "PENDING_FULFILLMENT": "new",
+    "OPEN": "new",
+    "ON_HOLD": "new",
+    "SCHEDULED": "new",
+}
+
+
+def _map_shopify_status(raw_fulfillment_status: Optional[str], cancelled: bool) -> str:
+    if cancelled:
+        return "cancelled"
+    return _SHOPIFY_STATUS_MAP.get((raw_fulfillment_status or "").upper(), "new")
+
+
+def _customer_name(customer: Optional[dict]) -> Optional[str]:
+    """Joins customer.firstName/lastName into a display name — None if
+    neither is present rather than an empty/whitespace-only string."""
+    if not customer:
+        return None
+    parts = [p for p in (customer.get("firstName"), customer.get("lastName")) if p]
+    return " ".join(parts) or None
+
 
 class ShopifyConnector(CommerceConnector):
     provider = "shopify"
@@ -257,7 +299,8 @@ class ShopifyConnector(CommerceConnector):
           orders(first: 50, query: $searchQuery, sortKey: UPDATED_AT) {
             edges { node {
               id name email
-              displayFulfillmentStatus displayFinancialStatus
+              customer { email firstName lastName }
+              displayFulfillmentStatus displayFinancialStatus cancelledAt
               createdAt
               totalPriceSet { shopMoney { amount currencyCode } }
               lineItems(first: 20) { edges { node { title quantity } } }
@@ -274,14 +317,21 @@ class ShopifyConnector(CommerceConnector):
             money = (node.get("totalPriceSet") or {}).get("shopMoney") or {}
             results.append(NormalizedOrder(
                 external_order_id=node["id"],
-                status=(node.get("displayFulfillmentStatus") or "new").lower(),
+                status=_map_shopify_status(node.get("displayFulfillmentStatus"), bool(node.get("cancelledAt"))),
                 order_lines=[
                     {"title": li["node"]["title"], "quantity": li["node"]["quantity"]}
                     for li in (node.get("lineItems") or {}).get("edges") or []
                 ],
                 total_amount=float(money["amount"]) if money.get("amount") else None,
                 currency=money.get("currencyCode"),
-                buyer_email=node.get("email"),
+                # Order.email is frequently null even when the order clearly
+                # has a customer attached (confirmed live, 2026-09-14: 2 of 3
+                # real test orders had email=null but customer.email set) —
+                # not a protected-data restriction (no GraphQL errors, full
+                # 200 response), Shopify's order-level email field is just
+                # unreliable. customer.email is the fallback.
+                buyer_email=node.get("email") or (node.get("customer") or {}).get("email"),
+                buyer_name=_customer_name(node.get("customer")),
                 placed_at=datetime.fromisoformat(node["createdAt"]) if node.get("createdAt") else None,
                 raw_metadata=node,
             ))
@@ -367,14 +417,24 @@ class ShopifyConnector(CommerceConnector):
             money = (payload.get("total_price_set") or {}).get("shop_money") or {}
             return NormalizedOrder(
                 external_order_id=str(payload.get("id")),
-                status=(payload.get("fulfillment_status") or "new"),
+                status=_map_shopify_status(payload.get("fulfillment_status"), bool(payload.get("cancelled_at"))),
                 order_lines=[
                     {"title": li.get("title"), "quantity": li.get("quantity")}
                     for li in payload.get("line_items") or []
                 ],
                 total_amount=float(money["amount"]) if money.get("amount") else None,
                 currency=money.get("currency_code"),
-                buyer_email=payload.get("email"),
+                buyer_email=payload.get("email") or (payload.get("customer") or {}).get("email"),
+                # REST webhook payload's customer object is snake_case
+                # (first_name/last_name), unlike GraphQL's camelCase — not
+                # reusing _customer_name() here since it'd silently return
+                # None against the wrong key spelling.
+                buyer_name=" ".join(
+                    p for p in (
+                        (payload.get("customer") or {}).get("first_name"),
+                        (payload.get("customer") or {}).get("last_name"),
+                    ) if p
+                ) or None,
                 raw_metadata=payload,
             )
         if topic == "orders/cancelled":
