@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import RedirectResponse, JSONResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,9 +41,22 @@ _STATE_TTL_SECONDS = 600
 _ADMIN_ROLES = ("admin", "tenant_admin")
 
 
+class ShopifyConnectRequest(BaseModel):
+    # Shopify's OAuth authorize URL is per-shop (https://{shop_domain}/admin/
+    # oauth/authorize) — the only one of the 5 connectors that needs an extra
+    # field before /connect can even build a redirect URL. Was a bare
+    # query-string `shop_domain: str` param before (2026-09-14 fix) — FastAPI
+    # rejected an empty-body POST with a 422 whose body shape
+    # ({"detail": [...]}）the frontend's generic error handler didn't expect,
+    # surfacing as a literal "[object Object]" instead of a real message. A
+    # proper request-body model fixes both the 422 shape and makes the
+    # required field explicit rather than an easy-to-miss query param.
+    shop_domain: str
+
+
 @router.post("/connect")
 async def shopify_connect(
-    shop_domain: str,
+    body: ShopifyConnectRequest,
     current_user: CurrentUser = Depends(require_role(*_ADMIN_ROLES)),
     redis=Depends(get_redis),
 ) -> dict:
@@ -53,7 +67,7 @@ async def shopify_connect(
     if not settings.SHOPIFY_ENABLED or not settings.SHOPIFY_CLIENT_ID:
         return JSONResponse(status_code=503, content={"error": "Shopify integration is not configured on this deployment"})
 
-    shop_domain = shop_domain.strip().lower()
+    shop_domain = body.shop_domain.strip().lower()
     if not shop_domain.endswith(".myshopify.com"):
         return JSONResponse(status_code=400, content={"error": "shop_domain must look like 'your-store.myshopify.com'"})
 
