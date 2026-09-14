@@ -7,26 +7,39 @@ sync endpoint per provider's route file.
 Calls the SAME ingestion.map_order()/map_return_to_ticket() functions the
 Celery task (tasks_marketplace_sync.py) calls for the webhook/auto path —
 per the plan's design, "auto" and "manual" are two invocations of one
-mapping layer, not two implementations to keep in sync. Messaging sync isn't
-included here yet (kind=orders|returns only) — every connector's
-send_message() is still unverified/stub (see each connector's module
-docstring), so there's nothing safe to trigger manually for that yet either.
+mapping layer, not two implementations to keep in sync.
+
+Outbound messaging (POST /orders/{order_id}/send-message, 2026-09-14) is
+real code against each connector's actual send_message() implementation,
+but both currently-wired connectors hit an external blocker independent of
+this code: Amazon gets a 403 (Messaging role not granted to this app in the
+Solution Provider Portal) and eBay's endpoint is documented as unsupported
+in sandbox entirely. Shopify/Etsy/Walmart have no messaging API at all
+(confirmed platform limitations, not gaps) — messaging_capability == NONE
+short-circuits those before ever calling send_message(). Inbound messaging
+sync isn't included here — would need a new fetch for eBay's separate
+Inquiry resource (distinct from the Return/cancellation Case resource
+fetch_returns() already syncs), and there's no real inquiry data in any
+connected sandbox account yet to build and verify that against.
 """
 
 import logging
 from datetime import datetime
 from typing import Literal, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import CurrentUser, require_role
 from app.database import get_db
 from app.models.marketplace import MarketplaceConnection, MarketplaceOrder, MarketplaceOrderTicketLink
-from app.models.ticket import Ticket, TicketStatus
+from app.models.ticket import Ticket, TicketComment, TicketStatus
 from app.redis_client import get_redis
 from app.services.marketplaces import ingestion
+from app.services.marketplaces.connectors.base import MessagingCapability
 from app.services.marketplaces.registry import get_connector
 from app.services.marketplaces.system_user import get_or_create_marketplace_bot_user
 
@@ -297,6 +310,76 @@ async def sync_marketplace_now(
     bot_user_id = await get_or_create_marketplace_bot_user(db, current_user.tenant_id)
     created, skipped = await _sync_provider_returns(db, connection, current_user.tenant_id, bot_user_id, redis)
     return {"tickets_created": created, "skipped_no_matching_order": skipped, "kind": "returns", "provider": provider}
+
+
+class SendMessageRequest(BaseModel):
+    message: str
+
+
+@router.post("/orders/{order_id}/send-message")
+async def send_message_to_buyer(
+    order_id: UUID,
+    body: SendMessageRequest,
+    current_user: CurrentUser = Depends(require_role(*_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Outbound messaging (capability #3's send half) — an agent's reply on
+    a ticket, relayed to the buyer through whichever marketplace the linked
+    order came from. See this module's docstring for the real, currently
+    external blockers on both connectors that otherwise have code here
+    (Amazon: 403, missing Messaging role grant; eBay: sandbox-unsupported
+    endpoint) — this route works correctly today, it just can't complete a
+    live send against either connected sandbox account yet.
+    """
+    order = (
+        await db.execute(
+            select(MarketplaceOrder).where(
+                MarketplaceOrder.id == order_id,
+                MarketplaceOrder.tenant_id == current_user.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if order is None:
+        return {"error": "order not found"}
+
+    connection = (
+        await db.execute(select(MarketplaceConnection).where(MarketplaceConnection.id == order.connection_id))
+    ).scalar_one_or_none()
+    if connection is None or connection.status != "connected":
+        return {"error": f"{order.provider} is not connected for this tenant"}
+
+    try:
+        connector = get_connector(order.provider)
+    except ValueError:
+        return {"error": f"unknown provider '{order.provider}'"}
+
+    if connector.messaging_capability == MessagingCapability.NONE:
+        return {"error": f"{order.provider} has no buyer-messaging capability (confirmed platform limitation, not a gap)"}
+
+    result = await connector.send_message(connection, order.external_order_id, body.message)
+    if not result.success:
+        return {"error": result.error}
+
+    # Record it on the linked ticket (if any) so every agent sees the
+    # outbound message in the same thread as everything else about this
+    # return/replacement — same reasoning as why marketplace comments land
+    # as ordinary TicketComments rather than a separate messaging inbox
+    # (see ingestion.map_message_to_comment's docstring, plan §4.5).
+    link = (
+        await db.execute(
+            select(MarketplaceOrderTicketLink).where(MarketplaceOrderTicketLink.order_id == order.id)
+        )
+    ).scalars().first()
+    if link is not None and current_user.local_user_id is not None:
+        db.add(TicketComment(
+            ticket_id=link.ticket_id,
+            author_id=current_user.local_user_id,
+            body=body.message,
+            is_internal=False,
+        ))
+        await db.commit()
+
+    return {"success": True, "external_message_id": result.external_message_id}
 
 
 __all__ = ["router"]

@@ -310,25 +310,58 @@ class AmazonConnector(CommerceConnector):
     # ------------------------------------------------------------------
 
     async def send_message(self, connection: MarketplaceConnection, order_or_case_id: str, message: str) -> SendResult:
-        """Per SP-API's documented (not yet sandbox-validated here) flow:
-        call getMessagingActionsForOrder to discover which message action
-        types are currently available for this order, then POST to whichever
-        one applies. Real seller/buyer messages require a specific template
-        action (e.g. AmazonMotors, confirmCustomizationDetails,
-        legalDisclosure) — Amazon does NOT offer a generic free-text send;
-        this simplification (treating `message` as if it maps to a generic
-        action) will need real work once tested against a sandbox order that
-        actually has message actions available."""
+        """Confirmed via direct doc research (2026-09-14): Amazon's Messaging
+        API is action-based, not a generic free-text send, same limitation
+        eBay's send_message hit. getMessagingActionsForOrder returns which
+        of a fixed set of templated actions (AmazonMotors, digitalAccessKey,
+        legalDisclosure, warranty, billInvoice, negativeFeedbackRemoval,
+        unexpectedProblem, confirmCustomizationDetails, ...) are currently
+        available for THIS order — most are templated/fixed-content, not
+        free text. confirmCustomizationDetails is the one action that does
+        accept genuine free text (1-800 chars) — used here as the closest
+        available mapping for a generic "send this message" call. If it
+        isn't in the order's available-actions list (most orders won't have
+        it — it's meant for confirming customization/personalization
+        details, not general buyer contact), there is no free-text option
+        for that order and this fails honestly rather than picking a
+        templated action and stuffing `message` somewhere it doesn't belong.
+
+        Also currently blocked independent of all this: this connection's
+        access token gets a 403 Unauthorized on getMessagingActionsForOrder
+        (confirmed live, 2026-09-14) — the Messaging role isn't granted to
+        this app in the Solution Provider Portal. That's an app-permission
+        gap, not something fixable in code; needs the role added + reconsent
+        before this can be live-verified at all.
+        """
         actions_body = await self._get(
             connection, f"/messaging/v1/orders/{order_or_case_id}/messages"
         )
         if not actions_body:
-            return SendResult(success=False, error="could not fetch available messaging actions for this order")
+            return SendResult(success=False, error="could not fetch available messaging actions for this order (see module docstring — likely a Messaging role/permission gap, not a transient failure)")
 
-        # TODO: no sandbox order has been tested with real messagingActions
-        # available yet — this is written against SP-API's documented shape,
-        # not confirmed live. Do not treat as working until validated.
-        return SendResult(success=False, error="Amazon send_message is unverified — needs sandbox validation before use, see module docstring")
+        actions = {a.get("name") for a in (actions_body.get("payload") or {}).get("_links", {}).get("actions", [])}
+        if "confirmCustomizationDetails" not in actions:
+            return SendResult(success=False, error="no free-text messaging action available for this order (Amazon's Messaging API is action-based, not generic send — see module docstring)")
+
+        settings = get_settings()
+        creds = await self._ensure_fresh_token(connection)
+        if not creds:
+            return SendResult(success=False, error="could not refresh token")
+        client = await self._get_client()
+        try:
+            resp = await client.post(
+                f"{self._base_url()}/messaging/v1/orders/{order_or_case_id}/messages/confirmCustomizationDetails",
+                headers={"x-amz-access-token": decrypt_secret(creds["access_token"])},
+                params={"marketplaceIds": settings.AMAZON_MARKETPLACE_IDS},
+                json={"text": message},
+            )
+            if resp.status_code not in (200, 201, 202):
+                logger.warning("[Amazon] send_message -> %d: %s", resp.status_code, resp.text[:200])
+                return SendResult(success=False, error=f"Amazon returned {resp.status_code}")
+        except Exception as exc:
+            logger.error("[Amazon] send_message failed: %r", exc, exc_info=True)
+            return SendResult(success=False, error=str(exc))
+        return SendResult(success=True)
 
 
 amazon_connector = AmazonConnector()

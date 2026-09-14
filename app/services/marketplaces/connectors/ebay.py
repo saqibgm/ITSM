@@ -280,13 +280,55 @@ class EbayConnector(CommerceConnector):
         return None
 
     async def send_message(self, connection: MarketplaceConnection, order_or_case_id: str, message: str) -> SendResult:
-        """UNVERIFIED — no sandbox test performed. Post-Order API's inquiry/
-        case comment endpoints are the likely mechanism (plan §2), written
-        against documented shape only."""
+        """Two real findings from direct doc research (2026-09-14) that
+        narrow this a lot from the original "messaging_capability = FULL,
+        mechanism unconfirmed" state:
+
+        1. The Post-Order API's CASE resource (what fetch_returns() above
+           actually syncs — RETURN case type) has NO standalone "send a
+           message" endpoint at all. Comments can only be attached as a
+           side-effect of a resolving action (close/issue_refund/appeal) —
+           there's no way to just message a buyer about their return
+           independent of one of those actions.
+        2. The one real two-way messaging endpoint eBay does have —
+           POST /post-order/v2/inquiry/{inquiryId}/send_message — is scoped
+           to a DIFFERENT resource: "INR" (Item Not Received) inquiries, not
+           return/replacement cases. `order_or_case_id` here must be an
+           inquiryId, not the caseId fetch_returns() produces — this
+           connector doesn't currently fetch inquiries at all, only return
+           cases, so there's nothing wired up to supply one yet.
+
+        On top of that: eBay's own docs state this endpoint is explicitly
+        "not supported in the Sandbox environment" — meaning even with a
+        real inquiryId, this cannot be live-verified against this org's
+        sandbox connection the way everything else in this build was.
+        Implemented against the documented production shape; flagged as
+        unverified because it structurally CAN'T be verified here, not
+        because the work wasn't done.
+        """
         creds = await self._ensure_fresh_token(connection)
         if not creds:
             return SendResult(success=False, error="could not refresh token")
-        return SendResult(success=False, error="eBay send_message is unverified — needs sandbox validation before use, see module docstring")
+
+        settings = get_settings()
+        _, api_base = _base_urls(settings.EBAY_ENVIRONMENT)
+        if settings.EBAY_ENVIRONMENT == "sandbox":
+            return SendResult(success=False, error="eBay's inquiry send_message endpoint is not supported in sandbox — cannot test here, production-only")
+
+        client = await self._get_client()
+        try:
+            resp = await client.post(
+                f"{api_base}/post-order/v2/inquiry/{order_or_case_id}/send_message",
+                headers={"Authorization": f"Bearer {decrypt_secret(creds['access_token'])}"},
+                json={"message": {"content": message}},
+            )
+            if resp.status_code != 200:
+                logger.warning("[eBay] send_message -> %d: %s", resp.status_code, resp.text[:200])
+                return SendResult(success=False, error=f"eBay returned {resp.status_code}")
+        except Exception as exc:
+            logger.error("[eBay] send_message failed: %r", exc, exc_info=True)
+            return SendResult(success=False, error=str(exc))
+        return SendResult(success=True)
 
 
 ebay_connector = EbayConnector()

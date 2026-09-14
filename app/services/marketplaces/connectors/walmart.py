@@ -98,10 +98,13 @@ def _base_urls(environment: str) -> tuple[str, str]:
 
 class WalmartConnector(CommerceConnector):
     provider = "walmart"
-    # Unconfirmed, not confirmed-none like Etsy — Phase 0 flagged this as
-    # "needs a direct docs deep-dive", not ruled out. NONE here reflects
-    # "not yet confirmed usable", not "confirmed unusable" — update once
-    # actually researched/tested.
+    # CONFIRMED none (2026-09-14, direct doc research at developer.walmart.com/
+    # us-marketplace/docs/introduction-to-marketplace-apis) — Walmart's full
+    # published API category list is Items, Inventory, Orders, Pricing,
+    # Promotions, Returns, Refunds, Reporting. No messaging/communication
+    # category exists. Same confirmed-platform-limitation status as Shopify
+    # and Etsy now, not the "unresearched, needs a deep-dive" flag Phase 0
+    # originally left this at.
     messaging_capability = MessagingCapability.NONE
 
     def __init__(self):
