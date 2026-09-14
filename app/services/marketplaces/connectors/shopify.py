@@ -336,10 +336,12 @@ class ShopifyConnector(CommerceConnector):
     ) -> Optional[NormalizedOrder | NormalizedReturn | NormalizedMessage]:
         """Signature verification happens in the webhook route (needs the raw
         body + the connection's own secret before this is even called) —
-        this method assumes it's already been verified and just normalizes
-        by X-Shopify-Topic. Returns None for topics this connector ignores
-        (GDPR compliance topics are handled at the route layer, not mapped
-        into a Normalized* shape here)."""
+        this method assumes it's already been verified. Parses the HTTP-layer
+        bits (topic header, JSON body) and delegates to normalize_event(),
+        which is also called directly by the Celery task from a stored
+        MarketplaceEvent row (event_type + already-decoded payload dict) —
+        one mapping implementation, two entry points, not two copies of the
+        topic-dispatch logic to keep in sync."""
         import json
 
         topic = headers.get("X-Shopify-Topic", "")
@@ -347,7 +349,15 @@ class ShopifyConnector(CommerceConnector):
             payload = json.loads(raw_payload)
         except Exception:
             return None
+        return self.normalize_event(topic, payload)
 
+    def normalize_event(
+        self, event_type: str, payload: dict
+    ) -> Optional[NormalizedOrder | NormalizedReturn | NormalizedMessage]:
+        """Returns None for topics this connector ignores (GDPR compliance
+        topics are handled at the route layer, not mapped into a Normalized*
+        shape here)."""
+        topic = event_type
         if topic in ("orders/create", "orders/updated"):
             money = (payload.get("total_price_set") or {}).get("shop_money") or {}
             return NormalizedOrder(

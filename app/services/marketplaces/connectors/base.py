@@ -130,9 +130,26 @@ class CommerceConnector(ABC):
     def parse_webhook(
         self, raw_payload: bytes, headers: dict[str, str]
     ) -> Optional[NormalizedOrder | NormalizedReturn | NormalizedMessage]:
-        """Auto path — verify signature/auth and normalize one inbound webhook
-        delivery. Returns None for events this connector chooses to ignore."""
+        """Auto path, called from the HTTP webhook route — verify signature/
+        auth (using the raw body) and normalize one inbound delivery. Returns
+        None for events this connector chooses to ignore."""
         raise NotImplementedError
+
+    def normalize_event(
+        self, event_type: str, payload: dict
+    ) -> Optional[NormalizedOrder | NormalizedReturn | NormalizedMessage]:
+        """Same mapping as parse_webhook, but called from a stored
+        MarketplaceEvent row (event_type + already-decoded payload dict) —
+        the Celery task's entry point, since by the time it runs, signature
+        verification already happened at the webhook route and the raw HTTP
+        bytes/headers aren't available anymore, only what got persisted.
+        Default None, matching connectors whose parse_webhook also always
+        returns None (no webhook route wired yet — see each connector's
+        module docstring for why). Connectors with a real webhook route
+        (currently only Shopify) override this with real topic-dispatch
+        logic; parse_webhook then delegates to it so there's one mapping
+        implementation, not two copies to keep in sync."""
+        return None
 
     async def send_message(
         self, connection: "MarketplaceConnection", order_or_case_id: str, message: str
