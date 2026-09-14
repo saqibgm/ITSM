@@ -451,6 +451,18 @@ class ShopifyConnector(CommerceConnector):
     async def send_message(self, connection: MarketplaceConnection, order_or_case_id: str, message: str) -> SendResult:
         return SendResult(success=False, error="Shopify has no order-tied buyer-messaging API — not a gap, a platform limitation (Phase 0 finding)")
 
+    def order_url(self, connection: MarketplaceConnection, external_order_id: str) -> Optional[str]:
+        """HIGH confidence — https://{shop}/admin/orders/{numeric_id} is
+        Shopify's long-standing, stable Admin order URL pattern. Our stored
+        external_order_id is the GraphQL global id (gid://shopify/Order/N),
+        not the plain numeric id the URL needs — extracted from the gid's
+        last path segment."""
+        shop_domain = connection.credentials.get("shop_domain") if connection.credentials else None
+        if not shop_domain:
+            return None
+        numeric_id = external_order_id.rsplit("/", 1)[-1]
+        return f"https://{shop_domain}/admin/orders/{numeric_id}"
+
 
 shopify_connector = ShopifyConnector()
 

@@ -96,6 +96,24 @@ async def list_marketplace_orders(
         )
     ).scalars().all()
 
+    # Batch-fetch this tenant's connections once (not per-row) — order_url()
+    # needs the owning connection for provider-specific fields like
+    # Shopify's shop_domain (see connectors/shopify.py's order_url()).
+    connections_by_id = {
+        c.id: c for c in (
+            await db.execute(select(MarketplaceConnection).where(MarketplaceConnection.tenant_id == current_user.tenant_id))
+        ).scalars().all()
+    }
+
+    def _order_url(o: MarketplaceOrder) -> Optional[str]:
+        connection = connections_by_id.get(o.connection_id)
+        if connection is None:
+            return None
+        try:
+            return get_connector(o.provider).order_url(connection, o.external_order_id)
+        except ValueError:
+            return None
+
     return {
         "items": [
             {
@@ -109,6 +127,7 @@ async def list_marketplace_orders(
                 "buyer_name": o.buyer_name,
                 "placed_at": o.placed_at.isoformat() if o.placed_at else None,
                 "updated_at": o.updated_at.isoformat(),
+                "external_url": _order_url(o),
             }
             for o in rows
         ],
@@ -165,6 +184,22 @@ async def list_marketplace_returns(
         )
     ).all()
 
+    # Same batch-fetch-connections approach as list_marketplace_orders above.
+    connections_by_id = {
+        c.id: c for c in (
+            await db.execute(select(MarketplaceConnection).where(MarketplaceConnection.tenant_id == current_user.tenant_id))
+        ).scalars().all()
+    }
+
+    def _order_url(order: MarketplaceOrder) -> Optional[str]:
+        connection = connections_by_id.get(order.connection_id)
+        if connection is None:
+            return None
+        try:
+            return get_connector(order.provider).order_url(connection, order.external_order_id)
+        except ValueError:
+            return None
+
     return {
         "items": [
             {
@@ -181,6 +216,7 @@ async def list_marketplace_returns(
                     "id": str(order.id),
                     "provider": order.provider,
                     "external_order_id": order.external_order_id,
+                    "external_url": _order_url(order),
                 },
             }
             for link, ticket, order in rows

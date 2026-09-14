@@ -229,6 +229,13 @@ class EtsyConnector(CommerceConnector):
             error="Etsy has no buyer-messaging API at all — confirmed hard platform limitation (Phase 0), not a gap to close",
         )
 
+    def order_url(self, connection: MarketplaceConnection, external_order_id: str) -> Optional[str]:
+        """MEDIUM-HIGH confidence — Shop Manager's sold-orders page accepting
+        a receipt_id query param is a long-documented, widely-referenced
+        pattern in Etsy seller help content. external_order_id here IS the
+        receipt_id (see fetch_orders above)."""
+        return f"https://www.etsy.com/your/orders/sold?order_id={external_order_id}"
+
 
 etsy_connector = EtsyConnector()
 

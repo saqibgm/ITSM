@@ -330,6 +330,17 @@ class EbayConnector(CommerceConnector):
             return SendResult(success=False, error=str(exc))
         return SendResult(success=True)
 
+    def order_url(self, connection: MarketplaceConnection, external_order_id: str) -> Optional[str]:
+        """MEDIUM confidence — the /sh/ord/ Seller Hub orders prefix is
+        confirmed real, but the exact deep-link query param for one specific
+        order (orderid= here) wasn't confirmed against live docs the way
+        Shopify/Amazon's were (2026-09-14 research only turned up the
+        general Seller Hub orders section, not a documented single-order
+        permalink spec). Worth a live click-through once this org has a
+        real eBay order to test against — not blindly trusted like the
+        other two."""
+        return f"https://www.ebay.com/sh/ord/details?orderid={external_order_id}"
+
 
 ebay_connector = EbayConnector()
 

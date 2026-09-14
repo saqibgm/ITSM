@@ -363,6 +363,16 @@ class AmazonConnector(CommerceConnector):
             return SendResult(success=False, error=str(exc))
         return SendResult(success=True)
 
+    def order_url(self, connection: MarketplaceConnection, external_order_id: str) -> Optional[str]:
+        """HIGH confidence — orders-v3/order/{AmazonOrderId} is Seller
+        Central's current, well-established order-details URL pattern.
+        Same URL for every marketplace this app is registered for; no
+        per-marketplace subdomain needed. Sandbox orders (like the ones
+        this org's test connection actually has) have no real browsable
+        page behind this link — it only resolves to something real for a
+        production seller account."""
+        return f"https://sellercentral.amazon.com/orders-v3/order/{external_order_id}"
+
 
 amazon_connector = AmazonConnector()
 

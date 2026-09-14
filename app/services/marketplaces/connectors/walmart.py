@@ -239,7 +239,21 @@ class WalmartConnector(CommerceConnector):
         return None
 
     async def send_message(self, connection: MarketplaceConnection, order_or_case_id: str, message: str) -> SendResult:
-        return SendResult(success=False, error="Walmart messaging capability is unresearched (Phase 0 gap) — not implemented")
+        return SendResult(
+            success=False,
+            error="Walmart has no buyer-messaging API at all — confirmed hard platform limitation (2026-09-14 doc research), not a gap to close",
+        )
+
+    def order_url(self, connection: MarketplaceConnection, external_order_id: str) -> Optional[str]:
+        """LOW-MEDIUM confidence — confirmed Seller Center's Order Management
+        Dashboard is where a PO's detail view lives (developer.walmart.com
+        docs reference sellers clicking a PO link there), but the exact
+        deep-link URL/query-param spec for one specific order wasn't
+        documented anywhere found (2026-09-14 research). This is a
+        best-effort guess at the pattern, not confirmed — needs a real
+        click-through once a Walmart connection + order actually exists,
+        more so than any other connector's order_url()."""
+        return f"https://seller.walmart.com/order-management/orders/{external_order_id}"
 
 
 walmart_connector = WalmartConnector()

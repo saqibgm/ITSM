@@ -176,6 +176,23 @@ class CommerceConnector(ABC):
         but this default makes the failure mode explicit rather than silent)."""
         return SendResult(success=False, error=f"{self.provider} connector does not support sending messages")
 
+    def order_url(self, connection: "MarketplaceConnection", external_order_id: str) -> Optional[str]:
+        """Deep link to this order's page in the marketplace's OWN seller
+        admin UI (Shopify Admin, Amazon Seller Central, ...) — added
+        2026-09-14 so the Orders/Returns pages can link out to the real
+        record instead of only showing our synced copy. Default None for
+        connectors that don't override it (shouldn't happen — every
+        connector below does — but kept safe rather than assuming).
+
+        Confidence varies per connector — see each override's docstring.
+        Shopify and Amazon's URL patterns are well-established/highly
+        confident; eBay and Walmart's are best-effort (direct doc research
+        couldn't confirm the exact seller-UI deep-link path, only the base
+        Seller Hub/Seller Center it lives under) — worth a live click-through
+        once real order data exists for those two, not blindly trusted.
+        """
+        return None
+
 
 __all__ = [
     "MessagingCapability",
