@@ -20,6 +20,7 @@ def create_celery() -> Celery:
         "app.workers.tasks_automation.*": {"queue": "default"},
         "app.workers.tasks_rca.*": {"queue": "default"},
         "app.workers.tasks_recordings.*": {"queue": "low"},
+        "app.workers.tasks_marketplace_sync.*": {"queue": "default"},
     }
     app.conf.task_serializer = "json"
     app.conf.result_serializer = "json"
@@ -43,6 +44,7 @@ def create_celery() -> Celery:
         "app.workers.tasks_slo",
         "app.workers.tasks_rca",
         "app.workers.tasks_recordings",
+        "app.workers.tasks_marketplace_sync",
     )
     app.conf.beat_schedule = {
         "sla-breach-check": {
