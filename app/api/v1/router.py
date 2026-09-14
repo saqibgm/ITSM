@@ -43,6 +43,8 @@ from app.api.v1.marketplace_amazon import router as marketplace_amazon_router
 from app.api.v1.marketplace_walmart import router as marketplace_walmart_router
 from app.api.v1.marketplace_ebay import router as marketplace_ebay_router
 from app.api.v1.marketplace_etsy import router as marketplace_etsy_router
+from app.api.v1.marketplace_sync import router as marketplace_sync_router
+from app.api.v1.marketplace_settings import router as marketplace_settings_router
 
 router = APIRouter()
 
@@ -148,3 +150,10 @@ router.include_router(marketplace_etsy_router)     # no webhook route — signin
 # for Amazon/Walmart's client-credentials model). fetch_orders()/
 # fetch_returns() (manual/backfill path) work for all 5 pending sandbox
 # validation — none of this has been tested against a live account.
+
+# Static-path settings route registered before the parametric {provider}/sync
+# route, same defensive ordering convention as tickets.py — no actual
+# collision today (no bare /marketplaces/{provider} route exists), kept
+# consistent anyway.
+router.include_router(marketplace_settings_router)  # /api/v1/marketplaces/settings (GET/PUT) — tenant-level config, §0a
+router.include_router(marketplace_sync_router)       # /api/v1/marketplaces/{provider}/sync — manual path, mirrors the Celery task's mapping calls
