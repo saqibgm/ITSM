@@ -191,10 +191,33 @@ class AmazonConnector(CommerceConnector):
     ) -> list[NormalizedOrder]:
         """getOrders (list), not the ported find_order()'s single-ID lookup —
         the CommerceConnector interface needs a backfill-capable list call.
-        CreatedAfter defaults to 30 days back if `since` isn't given, since
-        SP-API requires SOME lower bound on this endpoint."""
+
+        Date format — two real, confirmed-live findings (2026-09-14), not
+        from docs alone:
+        1. Production SP-API wants strict 'YYYY-MM-DDTHH:MM:SSZ' for
+           CreatedAfter — Python's default .isoformat() produces
+           '...+00:00' with microseconds, which SP-API's AmazonDateTime
+           schema rejects ('Could not match input arguments', a 400 with no
+           more specific detail). Fixed by formatting explicitly.
+        2. The SANDBOX environment is a *static mock* system that doesn't
+           accept real dates at all for CreatedAfter, despite Amazon's own
+           docs saying "ISO 8601 format" — it requires the literal sentinel
+           string 'TEST_CASE_200' to return canned mock data (confirmed
+           against multiple independent reports of the exact same 400 this
+           connector hit before this fix — this isn't a one-off account
+           quirk, it's how the sandbox is built). Sending a real date to
+           sandbox, or the sentinel to production, both fail the same way.
+        Branches on the global AMAZON_ENVIRONMENT setting, same as
+        _base_url() above — Amazon's environment isn't tracked per-connection
+        anywhere in this connector (unlike Walmart, which genuinely needs
+        per-tenant environment since its credentials are per-tenant too;
+        Amazon's app-level config is one setting for the whole deployment)."""
         settings = get_settings()
-        created_after = (since or datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        if settings.AMAZON_ENVIRONMENT == "sandbox":
+            created_after = "TEST_CASE_200"
+        else:
+            created_after_dt = since or datetime.now(timezone.utc) - timedelta(days=30)
+            created_after = created_after_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         body = await self._get(connection, "/orders/v0/orders", {
             "MarketplaceIds": settings.AMAZON_MARKETPLACE_IDS,
             "CreatedAfter": created_after,
