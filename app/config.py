@@ -140,6 +140,27 @@ class Settings(BaseSettings):
     AMAZON_MARKETPLACE_IDS: str = ""  # comma-separated, e.g. "ATVPDKIKX0DER" (US)
     AMAZON_ENVIRONMENT: str = "sandbox"  # 'sandbox' | 'production'
 
+    # Native marketplace integration — Walmart connector (pilot batch #3).
+    # No app-level client_id/secret here (unlike Shopify/Amazon) — Walmart's
+    # model is per-tenant API keys (client_credentials grant), not a single
+    # app many sellers OAuth-consent into. See connectors/walmart.py.
+    WALMART_ENABLED: bool = False
+
+    # Native marketplace integration — eBay connector (pilot batch #4).
+    EBAY_ENABLED: bool = False
+    EBAY_CLIENT_ID: str = ""
+    EBAY_CLIENT_SECRET: str = ""
+    EBAY_REDIRECT_URI: str = ""  # eBay calls this a "RuName", not a raw URL — see connectors/ebay.py
+    EBAY_ENVIRONMENT: str = "sandbox"  # 'sandbox' | 'production'
+    EBAY_SCOPES: str = "https://api.ebay.com/oauth/api_scope/sell.fulfillment https://api.ebay.com/oauth/api_scope/sell.post-order"
+
+    # Native marketplace integration — Etsy connector (pilot batch #5).
+    ETSY_ENABLED: bool = False
+    ETSY_CLIENT_ID: str = ""
+    ETSY_CLIENT_SECRET: str = ""
+    ETSY_REDIRECT_URI: str = ""
+    ETSY_SCOPES: str = "transactions_r"
+
     # Observability / hardening (S4.2)
     RATE_LIMIT_PER_MINUTE: int = 60
     RATE_LIMIT_BURST: int = 10

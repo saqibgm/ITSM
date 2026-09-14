@@ -40,6 +40,9 @@ from app.api.v1.rca_admin import router as rca_admin_router
 from app.api.v1.rca_dashboards import router as rca_dashboards_router
 from app.api.v1.marketplace_shopify import router as marketplace_shopify_router, webhook_router as marketplace_shopify_webhook_router
 from app.api.v1.marketplace_amazon import router as marketplace_amazon_router
+from app.api.v1.marketplace_walmart import router as marketplace_walmart_router
+from app.api.v1.marketplace_ebay import router as marketplace_ebay_router
+from app.api.v1.marketplace_etsy import router as marketplace_etsy_router
 
 router = APIRouter()
 
@@ -136,3 +139,12 @@ router.include_router(rca_dashboards_router)            # /api/v1/dashboards/rca
 router.include_router(marketplace_shopify_router)
 router.include_router(marketplace_shopify_webhook_router)  # /api/v1/webhooks/marketplace/shopify (UNAUTH — HMAC-verified)
 router.include_router(marketplace_amazon_router)  # no webhook route — Amazon has none, see connectors/amazon.py
+router.include_router(marketplace_walmart_router)  # no /callback (no OAuth redirect) or webhook route — see connectors/walmart.py
+router.include_router(marketplace_ebay_router)     # no webhook route — signing scheme unconfirmed, see connectors/ebay.py
+router.include_router(marketplace_etsy_router)     # no webhook route — signing scheme unconfirmed, see connectors/etsy.py
+# §5 pilot batch complete: Amazon, Shopify, Walmart, eBay, Etsy — all 5 have
+# connect/status/disconnect; only Shopify has a wired inbound webhook route
+# today (the others' signing schemes need confirming, or don't exist at all
+# for Amazon/Walmart's client-credentials model). fetch_orders()/
+# fetch_returns() (manual/backfill path) work for all 5 pending sandbox
+# validation — none of this has been tested against a live account.
