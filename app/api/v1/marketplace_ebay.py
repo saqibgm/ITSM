@@ -58,6 +58,16 @@ async def ebay_callback(request: Request, db: AsyncSession = Depends(get_db), re
     await redis.delete(f"ebay_oauth_state:{state}")
     entry = json.loads(raw_entry)
 
+    # eBay puts its own `error` param on the redirect when the authorize
+    # request itself was rejected (e.g. invalid_scope) — no `code` will ever
+    # arrive in that case. Surfacing THIS instead of falling through to the
+    # generic "missing_code" was the actual bug that hid the invalid_scope
+    # error behind a misleading label (2026-09-14, confirmed live: the API
+    # log showed error=invalid_scope on every attempt, but the browser only
+    # ever showed ebay_error=missing_code).
+    if args.get("error"):
+        return RedirectResponse(f"{frontend_admin}?ebay_error={args['error']}")
+
     code = args.get("code")
     if not code:
         return RedirectResponse(f"{frontend_admin}?ebay_error=missing_code")

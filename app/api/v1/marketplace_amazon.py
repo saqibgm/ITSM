@@ -70,6 +70,13 @@ async def amazon_callback(request: Request, db: AsyncSession = Depends(get_db), 
     await redis.delete(f"amazon_oauth_state:{state}")
     entry = json.loads(raw_entry)
 
+    # Amazon puts its own `error` param on the redirect when consent itself
+    # was rejected — surface it instead of falling through to the generic
+    # "missing_code" label (same masking bug found + fixed in eBay's
+    # callback, 2026-09-14).
+    if args.get("error"):
+        return RedirectResponse(f"{frontend_admin}?amazon_error={args['error']}")
+
     code = args.get("spapi_oauth_code")
     seller_id = args.get("selling_partner_id")
     if not code:

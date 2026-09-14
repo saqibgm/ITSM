@@ -106,6 +106,12 @@ async def shopify_callback(
     await redis.delete(f"shopify_oauth_state:{state}")
     entry = json.loads(raw_entry)
 
+    # Surface Shopify's own `error` param (e.g. a rejected scope) instead of
+    # falling through to a misleading "missing_code"/"invalid_signature"
+    # label — same masking bug found + fixed in eBay's callback, 2026-09-14.
+    if args.get("error"):
+        return RedirectResponse(f"{frontend_admin}?shopify_error={args['error']}")
+
     if not shopify_connector.verify_oauth_hmac(args, settings.SHOPIFY_CLIENT_SECRET):
         logger.warning("[Shopify] OAuth callback HMAC verification failed (state=%s)", state)
         return RedirectResponse(f"{frontend_admin}?shopify_error=invalid_signature")

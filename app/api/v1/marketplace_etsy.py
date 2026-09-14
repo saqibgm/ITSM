@@ -63,6 +63,13 @@ async def etsy_callback(request: Request, db: AsyncSession = Depends(get_db), re
     await redis.delete(f"etsy_oauth_state:{state}")
     entry = json.loads(raw_entry)
 
+    # Etsy puts its own `error` param on the redirect when consent itself
+    # was rejected — surface it instead of falling through to the generic
+    # "missing_code" label (same masking bug found + fixed in eBay's
+    # callback, 2026-09-14).
+    if args.get("error"):
+        return RedirectResponse(f"{frontend_admin}?etsy_error={args['error']}")
+
     code = args.get("code")
     if not code:
         return RedirectResponse(f"{frontend_admin}?etsy_error=missing_code")
