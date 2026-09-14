@@ -31,6 +31,10 @@ _ADMIN_ROLES = ("admin", "tenant_admin")
 class WalmartConnectRequest(BaseModel):
     client_id: str
     client_secret: str
+    # Sandbox and production are separate hostnames with non-interchangeable
+    # credentials (confirmed 2026-09-14, see connectors/walmart.py) — the
+    # caller must say which this client_id/secret pair belongs to.
+    environment: str = "sandbox"
 
 
 @router.post("/connect")
@@ -44,7 +48,7 @@ async def walmart_connect(
         return {"error": "Walmart integration is not enabled on this deployment"}
 
     result = await walmart_connector.connect(str(current_user.tenant_id), {
-        "client_id": body.client_id, "client_secret": body.client_secret,
+        "client_id": body.client_id, "client_secret": body.client_secret, "environment": body.environment,
     })
     if not result.success:
         return {"success": False, "error": result.error}
@@ -52,6 +56,7 @@ async def walmart_connect(
     credentials = {
         "client_id": encrypt_secret(body.client_id),
         "client_secret": encrypt_secret(body.client_secret),
+        "environment": body.environment,
     }
     existing = (
         await db.execute(

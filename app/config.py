@@ -156,7 +156,17 @@ class Settings(BaseSettings):
 
     # Native marketplace integration — Etsy connector (pilot batch #5).
     ETSY_ENABLED: bool = False
+    # ETSY_CLIENT_ID = the "Keystring" — used as OAuth client_id AND the
+    # x-api-key header on every API call (see connectors/etsy.py).
     ETSY_CLIENT_ID: str = ""
+    # Captured but NOT currently sent by connectors/etsy.py's token-exchange
+    # call — Etsy's documented v3 OAuth flow is PKCE-based and doesn't take a
+    # client_secret parameter in that request. The developer portal issued
+    # one anyway (confirmed live, 2026-09-14), so it's stored here rather
+    # than discarded — if the connector's token exchange ever needs it (e.g.
+    # confirm-worthy detail this org's own Shopify/Amazon builds ran into
+    # more than once: docs vs. live behavior diverging), it's already
+    # available without another portal trip.
     ETSY_CLIENT_SECRET: str = ""
     ETSY_REDIRECT_URI: str = ""
     ETSY_SCOPES: str = "transactions_r"

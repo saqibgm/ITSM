@@ -26,6 +26,16 @@ fetch_returns() and messaging are both UNRESEARCHED per Phase 0 (plan §2's
 table lists Walmart's messaging column as "unclear — needs a direct docs
 deep-dive", explicitly flagged as a gap to close before this connector's
 scope was finalized — not closed here either, still a stub).
+
+Sandbox/production correction (2026-09-14, caught by direct doc verification
+before this was ever live-tested): Walmart's sandbox is a SEPARATE hostname
+(sandbox.walmartapis.com), not the same host with different credentials the
+way this file originally assumed. Since Walmart's auth model is already
+per-tenant (no shared app-level config, see above), `environment` is stored
+per-connection in `credentials` alongside client_id/secret, not as a global
+setting — a tenant could plausibly hold separate sandbox and production
+Walmart credentials, and there's no app-wide config layer here to put it in
+even if that weren't true.
 """
 
 import logging
@@ -47,12 +57,23 @@ from app.services.marketplaces.crypto import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
 
-_TOKEN_URL = "https://marketplace.walmartapis.com/v3/token"
-_BASE_URL = "https://marketplace.walmartapis.com/v3"
 # Tokens are short-lived (~15 min per Walmart's docs) — refresh with a
 # generous skew rather than Shopify/Amazon's 5 min, since a 15-min token
 # leaves much less room for request latency to eat into validity.
 _REFRESH_SKEW = timedelta(minutes=3)
+
+
+def _base_urls(environment: str) -> tuple[str, str]:
+    """Returns (token_url, api_base) — confirmed via direct doc verification
+    (2026-09-14) that sandbox is a genuinely separate hostname
+    (sandbox.walmartapis.com), not the production host with different
+    credentials. Get this wrong and every call 401s regardless of how
+    correct the credentials are — same category of mistake eBay's
+    RuName-vs-URL confusion or Etsy's assumed-vs-actual client_secret
+    already caught elsewhere in this pilot batch."""
+    if environment == "sandbox":
+        return "https://sandbox.walmartapis.com/v3/token", "https://sandbox.walmartapis.com/v3"
+    return "https://marketplace.walmartapis.com/v3/token", "https://marketplace.walmartapis.com/v3"
 
 
 class WalmartConnector(CommerceConnector):
@@ -73,31 +94,36 @@ class WalmartConnector(CommerceConnector):
 
     async def connect(self, tenant_id: str, credentials: dict) -> ConnectionResult:
         """No OAuth redirect — the tenant supplies their own Walmart-issued
-        client_id/client_secret directly (see module docstring). This just
-        validates them by attempting a token grant; the caller (routes layer)
-        persists the (encrypted) client_id/client_secret themselves on
-        success, same as every other connector's connect()."""
+        client_id/client_secret directly (see module docstring), plus which
+        environment those credentials belong to ('sandbox' | 'production',
+        defaults to sandbox — sandbox and production credentials are NOT
+        interchangeable, see _base_urls()). This just validates them by
+        attempting a token grant; the caller (routes layer) persists the
+        (encrypted) client_id/client_secret + environment on success, same
+        as every other connector's connect()."""
         client_id = credentials.get("client_id")
         client_secret = credentials.get("client_secret")
+        environment = credentials.get("environment", "sandbox")
         if not client_id or not client_secret:
             return ConnectionResult(success=False, error="missing client_id or client_secret")
 
-        token = await self._get_token(client_id, client_secret)
+        token = await self._get_token(client_id, client_secret, environment)
         if not token:
-            return ConnectionResult(success=False, error="could not obtain access token — check credentials")
+            return ConnectionResult(success=False, error="could not obtain access token — check credentials and environment")
         return ConnectionResult(success=True, external_id=client_id)
 
-    async def _get_token(self, client_id: str, client_secret: str) -> Optional[str]:
+    async def _get_token(self, client_id: str, client_secret: str, environment: str) -> Optional[str]:
+        token_url, _ = _base_urls(environment)
         client = await self._get_client()
         try:
             resp = await client.post(
-                _TOKEN_URL,
+                token_url,
                 data={"grant_type": "client_credentials"},
                 auth=(client_id, client_secret),
                 headers={"Accept": "application/json", "WM_SVC.NAME": "Walmart Marketplace"},
             )
             if resp.status_code != 200:
-                logger.warning("[Walmart] token grant -> %d: %s", resp.status_code, resp.text[:200])
+                logger.warning("[Walmart] token grant (%s) -> %d: %s", environment, resp.status_code, resp.text[:200])
                 return None
             return resp.json().get("access_token")
         except Exception as exc:
@@ -113,7 +139,8 @@ class WalmartConnector(CommerceConnector):
             return decrypt_secret(cached_token)
 
         token = await self._get_token(
-            decrypt_secret(creds["client_id"]), decrypt_secret(creds["client_secret"])
+            decrypt_secret(creds["client_id"]), decrypt_secret(creds["client_secret"]),
+            creds.get("environment", "sandbox"),
         )
         if not token:
             return None
@@ -134,10 +161,11 @@ class WalmartConnector(CommerceConnector):
             return []
 
         created_start = (since or datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        _, api_base = _base_urls(connection.credentials.get("environment", "sandbox"))
         client = await self._get_client()
         try:
             resp = await client.get(
-                f"{_BASE_URL}/orders",
+                f"{api_base}/orders",
                 headers={"WM_SEC.ACCESS_TOKEN": token, "Accept": "application/json"},
                 params={"createdStartDate": created_start},
             )
