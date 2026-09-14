@@ -198,6 +198,57 @@ class MarketplaceOrder(Base, TimestampMixin, TenantScopedMixin):
     ticket_links: Mapped[list["MarketplaceOrderTicketLink"]] = relationship(
         "MarketplaceOrderTicketLink", back_populates="order", cascade="all, delete-orphan"
     )
+    messages: Mapped[list["MarketplaceMessage"]] = relationship(
+        "MarketplaceMessage", back_populates="order", cascade="all, delete-orphan"
+    )
+
+
+# ---------------------------------------------------------------------------
+# MarketplaceMessage — capability #3's own record, independent of whether the
+# order has a linked return/replacement ticket. Added 2026-09-14: the
+# original design only recorded an outbound send as a TicketComment via
+# MarketplaceOrderTicketLink, which meant a message on a plain order (no
+# return/replacement) vanished from any queryable record after sending —
+# a real gap once a dedicated cross-order Messaging page was asked for, not
+# just a per-row "send" action with no history view.
+# ---------------------------------------------------------------------------
+
+
+class MarketplaceMessage(Base, TenantScopedMixin):
+    """One message in either direction for one order — the read+write record
+    behind the standalone Messaging page, as opposed to MarketplaceOrderTicketLink's
+    ticket-comment mirror (kept alongside this, not replaced by it, so a
+    return/replacement ticket's thread still shows the same message inline
+    too — see marketplace_sync.py's send_message_to_buyer()).
+    """
+
+    __tablename__ = "marketplace_messages"
+    __table_args__ = (
+        sa.Index("ix_marketplace_messages_order", "order_id"),
+        sa.Index("ix_marketplace_messages_tenant_sent", "tenant_id", "sent_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(sa.UUID(as_uuid=True), primary_key=True, default=uuid7)
+    order_id: Mapped[UUID] = mapped_column(
+        sa.UUID(as_uuid=True),
+        sa.ForeignKey("marketplace_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(sa.VARCHAR(50), nullable=False)
+    direction: Mapped[str] = mapped_column(sa.VARCHAR(10), nullable=False, comment="'outbound' | 'inbound'")
+    body: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    external_message_id: Mapped[Optional[str]] = mapped_column(sa.VARCHAR(255), nullable=True)
+    # Set only for outbound messages sent by an agent through the ITSM UI —
+    # None for inbound (buyer-authored, no local User row to point at) and
+    # for any future auto/system-sent outbound message.
+    sent_by_user_id: Mapped[Optional[UUID]] = mapped_column(
+        sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    sent_at: Mapped[datetime] = mapped_column(
+        sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+    order: Mapped["MarketplaceOrder"] = relationship("MarketplaceOrder", back_populates="messages")
 
 
 # ---------------------------------------------------------------------------

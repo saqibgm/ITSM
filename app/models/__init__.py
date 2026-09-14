@@ -164,6 +164,7 @@ from app.models.marketplace import (
     MarketplaceConnection,
     MarketplaceEvent,
     MarketplaceIntegrationSettings,
+    MarketplaceMessage,
     MarketplaceOrder,
     MarketplaceOrderTicketLink,
 )
@@ -338,5 +339,6 @@ __all__ = [
     "MarketplaceEvent",
     "MarketplaceOrder",
     "MarketplaceOrderTicketLink",
+    "MarketplaceMessage",
     "MarketplaceIntegrationSettings",
 ]

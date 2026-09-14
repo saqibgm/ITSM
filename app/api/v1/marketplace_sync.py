@@ -21,6 +21,12 @@ sync isn't included here — would need a new fetch for eBay's separate
 Inquiry resource (distinct from the Return/cancellation Case resource
 fetch_returns() already syncs), and there's no real inquiry data in any
 connected sandbox account yet to build and verify that against.
+
+GET /messages (2026-09-14) is the read side of a dedicated cross-order
+Messaging page — every send now also writes a MarketplaceMessage row
+(migration 0041), independent of whether the order has a linked return/
+replacement ticket. Before this, an outbound send on a plain order (no
+ticket) recorded nothing queryable at all once sent.
 """
 
 import logging
@@ -35,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import CurrentUser, require_role
 from app.database import get_db
-from app.models.marketplace import MarketplaceConnection, MarketplaceOrder, MarketplaceOrderTicketLink
+from app.models.marketplace import MarketplaceConnection, MarketplaceMessage, MarketplaceOrder, MarketplaceOrderTicketLink
 from app.models.ticket import Ticket, TicketComment, TicketStatus
 from app.redis_client import get_redis
 from app.services.marketplaces import ingestion
@@ -396,11 +402,29 @@ async def send_message_to_buyer(
     if not result.success:
         return {"error": result.error}
 
-    # Record it on the linked ticket (if any) so every agent sees the
+    # Always record it in marketplace_messages (migration 0041) — the
+    # queryable record behind the standalone Messaging page, independent of
+    # whether this order has a linked return/replacement ticket. Before this
+    # existed, a send on a plain order recorded nothing at all once it left
+    # the request/response cycle.
+    db.add(MarketplaceMessage(
+        tenant_id=current_user.tenant_id,
+        order_id=order.id,
+        provider=order.provider,
+        direction="outbound",
+        body=body.message,
+        external_message_id=result.external_message_id,
+        sent_by_user_id=current_user.local_user_id,
+    ))
+
+    # ALSO record it on the linked ticket (if any) so every agent sees the
     # outbound message in the same thread as everything else about this
     # return/replacement — same reasoning as why marketplace comments land
     # as ordinary TicketComments rather than a separate messaging inbox
-    # (see ingestion.map_message_to_comment's docstring, plan §4.5).
+    # (see ingestion.map_message_to_comment's docstring, plan §4.5). This is
+    # deliberately IN ADDITION TO the MarketplaceMessage row above, not
+    # instead of it — the ticket thread and the Messaging page are two
+    # different views onto the same event, not two different sources of truth.
     link = (
         await db.execute(
             select(MarketplaceOrderTicketLink).where(MarketplaceOrderTicketLink.order_id == order.id)
@@ -413,9 +437,86 @@ async def send_message_to_buyer(
             body=body.message,
             is_internal=False,
         ))
-        await db.commit()
 
+    await db.commit()
     return {"success": True, "external_message_id": result.external_message_id}
+
+
+@router.get("/messages")
+async def list_marketplace_messages(
+    provider: Optional[str] = Query(None, description="Filter to one marketplace"),
+    order_id: Optional[UUID] = Query(None, description="Filter to one order"),
+    direction: Optional[Literal["outbound", "inbound"]] = Query(None),
+    sent_from: Optional[datetime] = Query(None, description="Only messages sent on/after this timestamp"),
+    sent_to: Optional[datetime] = Query(None, description="Only messages sent on/before this timestamp"),
+    current_user: CurrentUser = Depends(require_role(*_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(50, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """Cross-order Messaging page's read side — every MarketplaceMessage for
+    this tenant, joined with its order for buyer/external-id/external_url
+    context. See this module's top docstring for why this table exists
+    separately from TicketComment."""
+    conditions = [MarketplaceMessage.tenant_id == current_user.tenant_id]
+    if provider:
+        conditions.append(MarketplaceMessage.provider == provider)
+    if order_id:
+        conditions.append(MarketplaceMessage.order_id == order_id)
+    if direction:
+        conditions.append(MarketplaceMessage.direction == direction)
+    if sent_from:
+        conditions.append(MarketplaceMessage.sent_at >= sent_from)
+    if sent_to:
+        conditions.append(MarketplaceMessage.sent_at <= sent_to)
+
+    query = (
+        select(MarketplaceMessage, MarketplaceOrder)
+        .join(MarketplaceOrder, MarketplaceOrder.id == MarketplaceMessage.order_id)
+        .where(*conditions)
+    )
+    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
+    rows = (
+        await db.execute(query.order_by(MarketplaceMessage.sent_at.desc()).limit(limit).offset(offset))
+    ).all()
+
+    connections_by_id = {
+        c.id: c for c in (
+            await db.execute(select(MarketplaceConnection).where(MarketplaceConnection.tenant_id == current_user.tenant_id))
+        ).scalars().all()
+    }
+
+    def _order_url(order: MarketplaceOrder) -> Optional[str]:
+        connection = connections_by_id.get(order.connection_id)
+        if connection is None:
+            return None
+        try:
+            return get_connector(order.provider).order_url(connection, order.external_order_id)
+        except ValueError:
+            return None
+
+    return {
+        "items": [
+            {
+                "id": str(m.id),
+                "direction": m.direction,
+                "body": m.body,
+                "sent_at": m.sent_at.isoformat(),
+                "order": {
+                    "id": str(order.id),
+                    "provider": order.provider,
+                    "external_order_id": order.external_order_id,
+                    "external_url": _order_url(order),
+                    "buyer_name": order.buyer_name,
+                    "buyer_email": order.buyer_email,
+                },
+            }
+            for m, order in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 __all__ = ["router"]
