@@ -161,7 +161,17 @@ class Settings(BaseSettings):
     EBAY_CLIENT_SECRET: str = ""
     EBAY_REDIRECT_URI: str = ""  # eBay calls this a "RuName", not a raw URL — see connectors/ebay.py
     EBAY_ENVIRONMENT: str = "sandbox"  # 'sandbox' | 'production'
-    EBAY_SCOPES: str = "https://api.ebay.com/oauth/api_scope/sell.fulfillment https://api.ebay.com/oauth/api_scope/sell.post-order"
+    # sell.post-order dropped (2026-09-14, diagnostic) — eBay kept rejecting
+    # the authorize request with error=invalid_scope even after confirming
+    # both sell.fulfillment and sell.post-order were checked+saved on the
+    # OAuth Scopes page. The Select-OAuth-Scopes UI lets you REQUEST a
+    # scope; it doesn't guarantee your account is actually ENTITLED to it —
+    # eBay's Post-Order API has historically been a separately-gated API,
+    # not automatically granted to every sandbox keyset. Testing with just
+    # sell.fulfillment to isolate whether that's the actual blocker; if this
+    # connects, fetch_returns() (which needs post-order) stays broken until
+    # that entitlement is granted separately — flagged, not silently dropped.
+    EBAY_SCOPES: str = "https://api.ebay.com/oauth/api_scope/sell.fulfillment"
 
     # Native marketplace integration — Etsy connector (pilot batch #5).
     ETSY_ENABLED: bool = False

@@ -177,6 +177,92 @@ async def list_marketplace_returns(
     }
 
 
+async def _sync_provider_orders(db: AsyncSession, connection: MarketplaceConnection, tenant_id) -> int:
+    """One connector's order sync — shared by the per-provider and
+    sync-all-connected routes below so there's one implementation, not two
+    (same "auto/manual are two invocations of one mapping layer" principle
+    this module's docstring states for ingestion.py itself)."""
+    connector = get_connector(connection.provider)
+    orders = await connector.fetch_orders(connection)
+    synced = 0
+    for normalized in orders:
+        await ingestion.map_order(db, connection, tenant_id, normalized)
+        synced += 1
+    await db.commit()
+    return synced
+
+
+async def _sync_provider_returns(
+    db: AsyncSession, connection: MarketplaceConnection, tenant_id, bot_user_id, redis
+) -> tuple[int, int]:
+    """One connector's return/replacement sync — returns (created, skipped)."""
+    connector = get_connector(connection.provider)
+    returns = await connector.fetch_returns(connection)
+    created = 0
+    skipped = 0
+    for normalized in returns:
+        link = await ingestion.map_return_to_ticket(db, connection, tenant_id, bot_user_id, redis, normalized)
+        if link is not None:
+            created += 1
+        else:
+            skipped += 1
+    await db.commit()
+    return created, skipped
+
+
+@router.post("/sync")
+async def sync_all_marketplaces(
+    kind: Literal["orders", "returns"] = Query("orders"),
+    current_user: CurrentUser = Depends(require_role(*_ADMIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
+) -> dict:
+    """Syncs EVERY connected marketplace for this tenant in one call — the
+    "Sync" button on the combined Orders/Returns pages (as opposed to
+    /{provider}/sync below, which is the admin Marketplaces section's
+    per-connector trigger). Registered before /{provider}/sync in this file
+    even though the differing path shapes (2 segments vs 3) mean there's no
+    real routing ambiguity — kept for the same static-before-parametric
+    convention the GET /orders and /returns routes above already follow.
+
+    Re-running this updates existing records rather than duplicating them:
+    map_order() upserts by (tenant_id, provider, external_order_id), and
+    map_return_to_ticket() uses the return case's external_case_id as the
+    ticket's idempotency_key — so a case that already produced a ticket
+    won't produce a second one on a repeat sync.
+    """
+    connections = (
+        await db.execute(
+            select(MarketplaceConnection).where(
+                MarketplaceConnection.tenant_id == current_user.tenant_id,
+                MarketplaceConnection.status == "connected",
+            )
+        )
+    ).scalars().all()
+
+    results = []
+    if kind == "orders":
+        for connection in connections:
+            try:
+                synced = await _sync_provider_orders(db, connection, current_user.tenant_id)
+                results.append({"provider": connection.provider, "synced": synced})
+            except Exception:
+                logger.error("marketplace_sync_all_orders_failed", extra={"provider": connection.provider}, exc_info=True)
+                results.append({"provider": connection.provider, "error": "sync_failed"})
+        return {"kind": "orders", "results": results}
+
+    # kind == "returns"
+    bot_user_id = await get_or_create_marketplace_bot_user(db, current_user.tenant_id)
+    for connection in connections:
+        try:
+            created, skipped = await _sync_provider_returns(db, connection, current_user.tenant_id, bot_user_id, redis)
+            results.append({"provider": connection.provider, "tickets_created": created, "skipped_no_matching_order": skipped})
+        except Exception:
+            logger.error("marketplace_sync_all_returns_failed", extra={"provider": connection.provider}, exc_info=True)
+            results.append({"provider": connection.provider, "error": "sync_failed"})
+    return {"kind": "returns", "results": results}
+
+
 @router.post("/{provider}/sync")
 async def sync_marketplace_now(
     provider: str,
@@ -186,7 +272,7 @@ async def sync_marketplace_now(
     redis=Depends(get_redis),
 ) -> dict:
     try:
-        connector = get_connector(provider)
+        get_connector(provider)  # validates provider is known before touching the DB
     except ValueError:
         return {"error": f"unknown provider '{provider}'"}
 
@@ -203,28 +289,12 @@ async def sync_marketplace_now(
         return {"error": f"no connected {provider} account for this tenant"}
 
     if kind == "orders":
-        orders = await connector.fetch_orders(connection)
-        synced = 0
-        for normalized in orders:
-            await ingestion.map_order(db, connection, current_user.tenant_id, normalized)
-            synced += 1
-        await db.commit()
+        synced = await _sync_provider_orders(db, connection, current_user.tenant_id)
         return {"synced": synced, "kind": "orders", "provider": provider}
 
     # kind == "returns"
-    returns = await connector.fetch_returns(connection)
     bot_user_id = await get_or_create_marketplace_bot_user(db, current_user.tenant_id)
-    created = 0
-    skipped = 0
-    for normalized in returns:
-        link = await ingestion.map_return_to_ticket(
-            db, connection, current_user.tenant_id, bot_user_id, redis, normalized
-        )
-        if link is not None:
-            created += 1
-        else:
-            skipped += 1
-    await db.commit()
+    created, skipped = await _sync_provider_returns(db, connection, current_user.tenant_id, bot_user_id, redis)
     return {"tickets_created": created, "skipped_no_matching_order": skipped, "kind": "returns", "provider": provider}
 
 
