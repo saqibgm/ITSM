@@ -90,50 +90,43 @@ async def shopify_callback(
     (Shopify calls this directly), state token is the security boundary
     instead, same shape as the chatbot repo's bp_shopify.shopify_callback."""
     settings = get_settings()
+    # Every redirect below the initial state check must resolve against the
+    # itsm-app frontend's own origin, not this API's — Shopify calls this
+    # /callback directly on the API's origin (port 8000 locally), so a bare
+    # RedirectResponse("/admin/...") resolved as a 404 against the API itself
+    # (2026-09-14, confirmed live: Shopify connect succeeded but landed on a
+    # 404). itsm-service has no frontend of its own — Project-IQ-V2 serves it
+    # at /itsm (ITSM_FRONTEND_URL + /itsm/admin).
+    frontend_admin = f"{settings.ITSM_FRONTEND_URL}/itsm/admin"
     args = dict(request.query_params)
     state = args.get("state")
     raw_entry = await redis.get(f"shopify_oauth_state:{state}") if state else None
     if not raw_entry:
-        return RedirectResponse("/admin/marketplaces?shopify_error=invalid_state")
+        return RedirectResponse(f"{frontend_admin}?shopify_error=invalid_state")
     await redis.delete(f"shopify_oauth_state:{state}")
     entry = json.loads(raw_entry)
 
     if not shopify_connector.verify_oauth_hmac(args, settings.SHOPIFY_CLIENT_SECRET):
         logger.warning("[Shopify] OAuth callback HMAC verification failed (state=%s)", state)
-        return RedirectResponse("/admin/marketplaces?shopify_error=invalid_signature")
+        return RedirectResponse(f"{frontend_admin}?shopify_error=invalid_signature")
 
     code = args.get("code")
     shop_domain = args.get("shop") or entry["shop_domain"]
     if not code:
-        return RedirectResponse("/admin/marketplaces?shopify_error=missing_code")
+        return RedirectResponse(f"{frontend_admin}?shopify_error=missing_code")
 
     result = await shopify_connector.connect(entry["tenant_id"], {"shop_domain": shop_domain, "code": code})
     if not result.success:
-        return RedirectResponse(f"/admin/marketplaces?shopify_error={result.error}")
+        return RedirectResponse(f"{frontend_admin}?shopify_error={result.error}")
 
-    # Re-exchange to get the full token payload for storage — connect() only
-    # validates and returns success/shop_domain, doesn't persist (kept
-    # deliberately DB-session-free so it stays testable in isolation).
-    # TODO(cleanup): this re-does the HTTP call connect() already made;
-    # acceptable for this scaffold, worth refactoring connect() to return the
-    # full payload once a second connector's OAuth shape confirms the right
-    # shared signature (Amazon's LWA flow returns a differently-shaped payload).
-    settings_client = get_settings()
-    import httpx
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        token_resp = (await client.post(
-            f"https://{shop_domain}/admin/oauth/access_token",
-            json={
-                "client_id": settings_client.SHOPIFY_CLIENT_ID,
-                "client_secret": settings_client.SHOPIFY_CLIENT_SECRET,
-                "code": code,
-                "expiring": 1,
-            },
-        )).json()
-
+    # connect() already did the token exchange and hands back the raw
+    # payload via result.credentials — re-exchanging `code` here a second
+    # time (the old approach) 500'd, because Shopify's authorization code is
+    # single-use and the second POST got a 400 (2026-09-14 fix).
+    token_resp = result.credentials or {}
     access_token = token_resp.get("access_token")
     if not access_token:
-        return RedirectResponse(f"/admin/marketplaces?shopify_error={token_resp.get('error', 'token_failed')}")
+        return RedirectResponse(f"{frontend_admin}?shopify_error={token_resp.get('error', 'token_failed')}")
 
     expires_in = token_resp.get("expires_in")
     expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat() if expires_in else None
@@ -169,7 +162,7 @@ async def shopify_callback(
     await db.commit()
 
     logger.info("[Shopify] tenant %s connected shop %s", entry["tenant_id"], shop_domain)
-    return RedirectResponse("/admin/marketplaces?connected=shopify")
+    return RedirectResponse(f"{frontend_admin}?connected=shopify")
 
 
 @router.get("/connection")

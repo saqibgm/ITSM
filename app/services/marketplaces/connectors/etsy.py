@@ -119,7 +119,10 @@ class EtsyConnector(CommerceConnector):
         # Etsy's access_token is prefixed "{shop_id}.{token}" — the shop_id
         # is recoverable from the token itself, used as external_id.
         external_id = payload["access_token"].split(".")[0]
-        return ConnectionResult(success=True, external_id=external_id)
+        # Hand the payload back instead of making the route re-exchange
+        # `code` — same single-use-code bug fixed in Shopify's connector
+        # (2026-09-14), applies here too.
+        return ConnectionResult(success=True, external_id=external_id, credentials=payload)
 
     async def _ensure_fresh_token(self, connection: MarketplaceConnection) -> Optional[dict]:
         creds = connection.credentials

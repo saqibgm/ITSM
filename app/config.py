@@ -8,6 +8,15 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     SECRET_KEY: str
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
+    # Base URL of the Project-IQ-V2 web app that serves this repo's frontend
+    # (itsm-service has no frontend of its own — web/ui/src/itsm-app/ lives in
+    # Project-IQ-V2, served at /itsm). Needed because the marketplace OAuth
+    # callbacks below are hit directly by the marketplace (Shopify/Amazon/eBay/
+    # Etsy) against THIS API's own origin — a bare RedirectResponse("/admin/...")
+    # resolves against that origin (this API, port 8000, no such route -> 404),
+    # not the frontend's origin. Confirmed live 2026-09-14 (Shopify connect
+    # succeeded but landed on a 404 for exactly this reason).
+    ITSM_FRONTEND_URL: str = "http://localhost:8181"
 
     DATABASE_URL: str
     DB_POOL_SIZE: int = 20

@@ -108,7 +108,10 @@ class EbayConnector(CommerceConnector):
 
         if not payload.get("access_token") or not payload.get("refresh_token"):
             return ConnectionResult(success=False, error=payload.get("error", "token_exchange_failed"))
-        return ConnectionResult(success=True)
+        # Hand the payload back instead of making the route re-exchange
+        # `code` — same single-use-code bug fixed in Shopify's connector
+        # (2026-09-14), applies here too.
+        return ConnectionResult(success=True, credentials=payload)
 
     async def _ensure_fresh_token(self, connection: MarketplaceConnection) -> Optional[dict]:
         creds = connection.credentials

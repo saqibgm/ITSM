@@ -120,7 +120,11 @@ class AmazonConnector(CommerceConnector):
         if not payload.get("access_token") or not payload.get("refresh_token"):
             return ConnectionResult(success=False, error=payload.get("error", "token_exchange_failed"))
 
-        return ConnectionResult(success=True, external_id=seller_id)
+        # Hand the payload back instead of making the route re-exchange
+        # `code` — same single-use-code bug fixed in Shopify's connector
+        # (2026-09-14), applies here too since spapi_oauth_code is also
+        # single-use and expires 5 minutes after issuance.
+        return ConnectionResult(success=True, external_id=seller_id, credentials=payload)
 
     async def _ensure_fresh_token(self, connection: MarketplaceConnection) -> Optional[dict]:
         """Unlike Shopify, Amazon's refresh_token does NOT rotate — only the

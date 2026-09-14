@@ -52,39 +52,34 @@ async def etsy_connect(
 @router.get("/callback")
 async def etsy_callback(request: Request, db: AsyncSession = Depends(get_db), redis=Depends(get_redis)):
     settings = get_settings()
+    # See marketplace_shopify.py's callback for why this must be the
+    # frontend's own origin, not a bare relative path (2026-09-14 fix).
+    frontend_admin = f"{settings.ITSM_FRONTEND_URL}/itsm/admin"
     args = dict(request.query_params)
     state = args.get("state")
     raw_entry = await redis.get(f"etsy_oauth_state:{state}") if state else None
     if not raw_entry:
-        return RedirectResponse("/admin/marketplaces?etsy_error=invalid_state")
+        return RedirectResponse(f"{frontend_admin}?etsy_error=invalid_state")
     await redis.delete(f"etsy_oauth_state:{state}")
     entry = json.loads(raw_entry)
 
     code = args.get("code")
     if not code:
-        return RedirectResponse("/admin/marketplaces?etsy_error=missing_code")
+        return RedirectResponse(f"{frontend_admin}?etsy_error=missing_code")
 
     result = await etsy_connector.connect(entry["tenant_id"], {"code": code, "code_verifier": entry["code_verifier"]})
     if not result.success:
-        return RedirectResponse(f"/admin/marketplaces?etsy_error={result.error}")
+        return RedirectResponse(f"{frontend_admin}?etsy_error={result.error}")
 
-    import httpx
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        token_resp = (await client.post(
-            "https://api.etsy.com/v3/public/oauth/token",
-            data={
-                "grant_type": "authorization_code",
-                "client_id": settings.ETSY_CLIENT_ID,
-                "redirect_uri": settings.ETSY_REDIRECT_URI,
-                "code": code,
-                "code_verifier": entry["code_verifier"],
-            },
-        )).json()
-
+    # connect() already exchanged `code` and hands back the raw payload via
+    # result.credentials — re-exchanging it here a second time (the old
+    # approach) would fail, Etsy's authorization code is single-use (same
+    # class of bug fixed in marketplace_shopify.py's callback, 2026-09-14).
+    token_resp = result.credentials or {}
     access_token = token_resp.get("access_token")
     refresh_token = token_resp.get("refresh_token")
     if not access_token or not refresh_token:
-        return RedirectResponse(f"/admin/marketplaces?etsy_error={token_resp.get('error', 'token_failed')}")
+        return RedirectResponse(f"{frontend_admin}?etsy_error={token_resp.get('error', 'token_failed')}")
 
     expires_in = token_resp.get("expires_in")
     credentials = {
@@ -118,7 +113,7 @@ async def etsy_callback(request: Request, db: AsyncSession = Depends(get_db), re
             messaging_capability=MessagingCapability.NONE.value,
         ))
     await db.commit()
-    return RedirectResponse("/admin/marketplaces?connected=etsy")
+    return RedirectResponse(f"{frontend_admin}?connected=etsy")
 
 
 @router.get("/connection")

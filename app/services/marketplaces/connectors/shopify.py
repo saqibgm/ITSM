@@ -135,7 +135,12 @@ class ShopifyConnector(CommerceConnector):
         if not access_token:
             return ConnectionResult(success=False, error=payload.get("error", "token_exchange_failed"))
 
-        return ConnectionResult(success=True, external_id=shop_domain)
+        # Hand the raw payload back rather than making the route layer
+        # re-exchange `code` a second time — Shopify's authorization code is
+        # single-use, so a second POST to /admin/oauth/access_token with the
+        # same code 400s (was the actual cause of the "[object Object]"-
+        # adjacent 500 the route used to raise, 2026-09-14).
+        return ConnectionResult(success=True, external_id=shop_domain, credentials=payload)
 
     # ------------------------------------------------------------------
     # Token refresh — ported from ShopifyService._refresh_token/_ensure_fresh_token

@@ -77,6 +77,15 @@ class ConnectionResult:
     success: bool
     external_id: Optional[str] = None
     error: Optional[str] = None
+    # Raw token-exchange payload (access_token, refresh_token, expires_in,
+    # scope, ...) for connectors whose OAuth code is single-use — the route
+    # layer must persist THIS instead of re-exchanging the same code a
+    # second time to "get the full payload for storage" (Shopify bug,
+    # 2026-09-14: the code had already been consumed inside connect(), so
+    # the second exchange got a 400 from Shopify). None for connectors that
+    # don't need this (e.g. Walmart's client_credentials grant has nothing
+    # code-shaped to reuse).
+    credentials: Optional[dict] = None
 
 
 @dataclass

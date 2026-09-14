@@ -58,47 +58,39 @@ async def amazon_connect(
 async def amazon_callback(request: Request, db: AsyncSession = Depends(get_db), redis=Depends(get_redis)):
     """Amazon redirects here with state, spapi_oauth_code, selling_partner_id.
     spapi_oauth_code expires 5 minutes after issuance — exchanged immediately."""
+    settings = get_settings()
+    # See marketplace_shopify.py's callback for why this must be the
+    # frontend's own origin, not a bare relative path (2026-09-14 fix).
+    frontend_admin = f"{settings.ITSM_FRONTEND_URL}/itsm/admin"
     args = dict(request.query_params)
     state = args.get("state")
     raw_entry = await redis.get(f"amazon_oauth_state:{state}") if state else None
     if not raw_entry:
-        return RedirectResponse("/admin/marketplaces?amazon_error=invalid_state")
+        return RedirectResponse(f"{frontend_admin}?amazon_error=invalid_state")
     await redis.delete(f"amazon_oauth_state:{state}")
     entry = json.loads(raw_entry)
 
     code = args.get("spapi_oauth_code")
     seller_id = args.get("selling_partner_id")
     if not code:
-        return RedirectResponse("/admin/marketplaces?amazon_error=missing_code")
+        return RedirectResponse(f"{frontend_admin}?amazon_error=missing_code")
 
     result = await amazon_connector.connect(entry["tenant_id"], {
         "spapi_oauth_code": code, "selling_partner_id": seller_id,
     })
     if not result.success:
-        return RedirectResponse(f"/admin/marketplaces?amazon_error={result.error}")
+        return RedirectResponse(f"{frontend_admin}?amazon_error={result.error}")
 
-    # Same re-exchange note as marketplace_shopify.py's callback — connect()
-    # validates + returns success/external_id but doesn't persist, kept
-    # DB-session-free. Re-doing the HTTP call here is acceptable for this
-    # scaffold; worth refactoring once a third connector's OAuth shape
-    # confirms the right shared signature.
-    import httpx
-    settings = get_settings()
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        token_resp = (await client.post(
-            "https://api.amazon.com/auth/o2/token",
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "client_id": settings.AMAZON_CLIENT_ID,
-                "client_secret": settings.AMAZON_CLIENT_SECRET,
-            },
-        )).json()
-
+    # connect() already exchanged spapi_oauth_code and hands back the raw
+    # payload via result.credentials — re-exchanging it here a second time
+    # (the old approach) would fail, since spapi_oauth_code is single-use
+    # and expires 5 minutes after issuance (same class of bug fixed in
+    # marketplace_shopify.py's callback, 2026-09-14).
+    token_resp = result.credentials or {}
     access_token = token_resp.get("access_token")
     refresh_token = token_resp.get("refresh_token")
     if not access_token or not refresh_token:
-        return RedirectResponse(f"/admin/marketplaces?amazon_error={token_resp.get('error', 'token_failed')}")
+        return RedirectResponse(f"{frontend_admin}?amazon_error={token_resp.get('error', 'token_failed')}")
 
     expires_in = token_resp.get("expires_in")
     credentials = {
@@ -137,7 +129,7 @@ async def amazon_callback(request: Request, db: AsyncSession = Depends(get_db), 
     await db.commit()
 
     logger.info("[Amazon] tenant %s connected seller %s", entry["tenant_id"], seller_id)
-    return RedirectResponse("/admin/marketplaces?connected=amazon")
+    return RedirectResponse(f"{frontend_admin}?connected=amazon")
 
 
 @router.get("/connection")
