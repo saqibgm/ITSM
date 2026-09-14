@@ -50,12 +50,19 @@ _REFRESH_SKEW = timedelta(minutes=5)
 
 
 def _base_urls(environment: str) -> tuple[str, str]:
-    """Returns (oauth_base, api_base) — eBay's sandbox and production
-    environments live on entirely different hostnames, not a query param
-    or header switch like Amazon's sandbox/production split."""
+    """Returns (authorize_base, api_base).
+
+    These are TWO DIFFERENT eBay hosts, not the same host reused — a real
+    bug found via live testing (2026-09-14): the user-facing consent screen
+    lives on auth.*.ebay.com, while the token endpoint (/identity/v1/oauth2/
+    token, used for both the initial code exchange and refreshes) and the
+    Sell/Post-Order APIs live on api.*.ebay.com. Redirecting the browser to
+    api.sandbox.ebay.com/oauth2/authorize (the original, wrong version of
+    this function) 404s — that host has no such page.
+    """
     if environment == "sandbox":
-        return "https://api.sandbox.ebay.com", "https://api.sandbox.ebay.com"
-    return "https://api.ebay.com", "https://api.ebay.com"
+        return "https://auth.sandbox.ebay.com", "https://api.sandbox.ebay.com"
+    return "https://auth.ebay.com", "https://api.ebay.com"
 
 
 class EbayConnector(CommerceConnector):
@@ -72,7 +79,7 @@ class EbayConnector(CommerceConnector):
 
     def authorize_url(self, state: str) -> str:
         settings = get_settings()
-        oauth_base, _ = _base_urls(settings.EBAY_ENVIRONMENT)
+        authorize_base, _ = _base_urls(settings.EBAY_ENVIRONMENT)
         params = httpx.QueryParams({
             "client_id": settings.EBAY_CLIENT_ID,
             "redirect_uri": settings.EBAY_REDIRECT_URI,  # RuName, not a URL — see module docstring
@@ -80,7 +87,7 @@ class EbayConnector(CommerceConnector):
             "scope": settings.EBAY_SCOPES,
             "state": state,
         })
-        return f"{oauth_base}/oauth2/authorize?{params}"
+        return f"{authorize_base}/oauth2/authorize?{params}"
 
     async def connect(self, tenant_id: str, credentials: dict) -> ConnectionResult:
         settings = get_settings()
@@ -88,11 +95,11 @@ class EbayConnector(CommerceConnector):
         if not code:
             return ConnectionResult(success=False, error="missing code")
 
-        oauth_base, _ = _base_urls(settings.EBAY_ENVIRONMENT)
+        _, api_base = _base_urls(settings.EBAY_ENVIRONMENT)
         client = await self._get_client()
         try:
             resp = await client.post(
-                f"{oauth_base}/identity/v1/oauth2/token",
+                f"{api_base}/identity/v1/oauth2/token",
                 data={
                     "grant_type": "authorization_code",
                     "code": code,
@@ -121,11 +128,11 @@ class EbayConnector(CommerceConnector):
             return creds
 
         settings = get_settings()
-        oauth_base, _ = _base_urls(settings.EBAY_ENVIRONMENT)
+        _, api_base = _base_urls(settings.EBAY_ENVIRONMENT)
         client = await self._get_client()
         try:
             resp = await client.post(
-                f"{oauth_base}/identity/v1/oauth2/token",
+                f"{api_base}/identity/v1/oauth2/token",
                 data={
                     "grant_type": "refresh_token",
                     "refresh_token": decrypt_secret(creds["refresh_token"]),
