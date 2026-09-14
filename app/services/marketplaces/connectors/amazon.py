@@ -45,7 +45,6 @@ from app.services.marketplaces.connectors.base import (
     CommerceConnector,
     ConnectionResult,
     MessagingCapability,
-    NormalizedMessage,
     NormalizedOrder,
     NormalizedReturn,
     SendResult,
