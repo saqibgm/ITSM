@@ -200,6 +200,7 @@ class EtsyConnector(CommerceConnector):
                 currency=(receipt.get("grandtotal") or {}).get("divisor") and receipt.get("grandtotal", {}).get("currency_code"),
                 buyer_email=receipt.get("buyer_email"),
                 buyer_name=receipt.get("name"),  # Etsy's receipt.name is the shipping recipient's full name
+                buyer_note=receipt.get("message_from_buyer") or None,  # real field, confirmed via Etsy's ShopReceipt schema — a checkout-time note, not a live channel
                 placed_at=datetime.fromtimestamp(receipt["created_timestamp"], tz=timezone.utc) if receipt.get("created_timestamp") else None,
                 raw_metadata=receipt,
             ))

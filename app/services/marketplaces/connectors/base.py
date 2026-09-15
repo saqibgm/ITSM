@@ -45,6 +45,18 @@ class NormalizedOrder:
     # ebay.py's fetch_orders, which was actually storing eBay's USERNAME in
     # buyer_email before this fix, not a real email address).
     buyer_name: Optional[str] = None
+    # Added 2026-09-14 — a genuine buyer-authored note captured AT CHECKOUT
+    # (not a live two-way channel — a one-time field on the order itself).
+    # Real, confirmed fields, not internal merchant notes: Etsy's
+    # message_from_buyer, eBay's buyerCheckoutNotes. Both already come back
+    # on the same fetch_orders() call every connector already makes — no new
+    # API access needed. Amazon only has a narrow GiftMessage (gift orders
+    # only, not general buyer communication) — not populated here since it
+    # isn't really the same thing. Shopify/Walmart have no such field at all
+    # (confirmed via direct doc research — Shopify's CommentEvent is
+    # internal-staff-only AND read-only via API; Walmart's order schema has
+    # no note/comment field whatsoever).
+    buyer_note: Optional[str] = None
     placed_at: Optional[datetime] = None
     raw_metadata: dict = field(default_factory=dict)
 

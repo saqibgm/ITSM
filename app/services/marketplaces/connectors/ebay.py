@@ -226,6 +226,7 @@ class EbayConnector(CommerceConnector):
                 # email. buyer_name is the honest field for it; buyer_email
                 # stays unset (None) for eBay orders.
                 buyer_name=(order.get("buyer") or {}).get("username"),
+                buyer_note=order.get("buyerCheckoutNotes") or None,  # real field, confirmed via eBay's Order type — a checkout-time note, not a live channel
                 placed_at=datetime.fromisoformat(order["creationDate"]) if order.get("creationDate") else None,
                 raw_metadata=order,
             ))

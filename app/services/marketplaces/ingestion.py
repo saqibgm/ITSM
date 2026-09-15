@@ -30,7 +30,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.marketplace import MarketplaceConnection, MarketplaceOrder, MarketplaceOrderTicketLink
+from app.models.marketplace import MarketplaceConnection, MarketplaceMessage, MarketplaceOrder, MarketplaceOrderTicketLink
 from app.models.ticket import TicketComment, TicketPriority, TicketType
 from app.services.marketplaces.connectors.base import NormalizedMessage, NormalizedOrder, NormalizedReturn
 from app.services.ticket_service import CreateTicketData, TicketService
@@ -83,6 +83,23 @@ async def map_order(
     )
     db.add(row)
     await db.flush()
+
+    # A checkout-time buyer note (Etsy's message_from_buyer, eBay's
+    # buyerCheckoutNotes — see NormalizedOrder.buyer_note's own comment for
+    # why only these two connectors populate this) becomes one inbound
+    # MarketplaceMessage, captured only on the order's FIRST sync — it's a
+    # one-time field set at checkout, not a live value that changes on
+    # re-sync, so re-fetching this same order later must not re-insert it.
+    if order.buyer_note:
+        db.add(MarketplaceMessage(
+            tenant_id=tenant_id,
+            order_id=row.id,
+            provider=connection.provider,
+            direction="inbound",
+            body=order.buyer_note,
+            sent_at=order.placed_at or row.created_at,
+        ))
+
     return row
 
 
