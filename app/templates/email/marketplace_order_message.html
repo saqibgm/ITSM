@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block subject %}Message about your {{ provider }} order{% endblock %}</title>
+</head>
+<body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;padding:24px;">
+{% block body %}
+<h2 style="color:#1a56db;">Message about your order</h2>
+{% if buyer_name %}<p>Hi {{ buyer_name }},</p>{% endif %}
+<p style="white-space:pre-wrap;">{{ body }}</p>
+<p style="margin-top:24px;color:#6b7280;font-size:12px;">
+    Regarding order {{ external_order_id }}{% if provider %} ({{ provider | capitalize }}){% endif %}.
+    Reply directly to this email to continue the conversation.
+</p>
+{% endblock %}
+</body>
+</html>

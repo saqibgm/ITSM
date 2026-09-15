@@ -367,11 +367,24 @@ async def send_message_to_buyer(
 ) -> dict:
     """Outbound messaging (capability #3's send half) — an agent's reply on
     a ticket, relayed to the buyer through whichever marketplace the linked
-    order came from. See this module's docstring for the real, currently
-    external blockers on both connectors that otherwise have code here
-    (Amazon: 403, missing Messaging role grant; eBay: sandbox-unsupported
-    endpoint) — this route works correctly today, it just can't complete a
-    live send against either connected sandbox account yet.
+    order came from, with an EMAIL FALLBACK (2026-09-14) when the native
+    marketplace channel is unavailable or blocked and we have a real buyer
+    email on file.
+
+    This isn't a workaround bolted onto every connector — it's the same
+    mechanism third-party helpdesks (eDesk et al.) actually use for
+    marketplaces with no order-tied messaging API at all (Shopify, Etsy,
+    Walmart — confirmed via direct doc research, connectors/*.py's own
+    messaging_capability notes): a plain transactional email to the buyer's
+    address already captured on the order (MarketplaceOrder.buyer_email),
+    via this repo's existing send_email_notification Celery task — no
+    marketplace API, no scope/permission wall, nothing to be blocked on.
+    Works TODAY for Shopify/Etsy/Walmart, which all capture a genuine buyer
+    email. Amazon/eBay's buyer_email is usually empty (PII-gated /not
+    exposed at all respectively), so this fallback often can't fire for
+    them yet — but their native send_message() is still tried FIRST, so
+    nothing regresses once Amazon's Messaging role is granted or eBay moves
+    to production.
     """
     order = (
         await db.execute(
@@ -395,12 +408,36 @@ async def send_message_to_buyer(
     except ValueError:
         return {"error": f"unknown provider '{order.provider}'"}
 
-    if connector.messaging_capability == MessagingCapability.NONE:
-        return {"error": f"{order.provider} has no buyer-messaging capability (confirmed platform limitation, not a gap)"}
+    channel = None
+    external_message_id = None
+    native_error = None
 
-    result = await connector.send_message(connection, order.external_order_id, body.message)
-    if not result.success:
-        return {"error": result.error}
+    if connector.messaging_capability != MessagingCapability.NONE:
+        result = await connector.send_message(connection, order.external_order_id, body.message)
+        if result.success:
+            channel = order.provider
+            external_message_id = result.external_message_id
+        else:
+            native_error = result.error
+
+    if channel is None:
+        if not order.buyer_email:
+            reason = f" ({native_error})" if native_error else " (confirmed platform limitation, not a gap)"
+            return {"error": f"{order.provider} has no working messaging path for this order{reason} — no buyer email on record to fall back to either"}
+
+        from app.workers.tasks_notifications import send_email_notification
+        send_email_notification.delay(
+            to_email=order.buyer_email,
+            template_name="marketplace_order_message",
+            context={
+                "title": f"Message about your {order.provider} order",
+                "body": body.message,
+                "buyer_name": order.buyer_name,
+                "provider": order.provider,
+                "external_order_id": order.external_order_id,
+            },
+        )
+        channel = "email"
 
     # Always record it in marketplace_messages (migration 0041) — the
     # queryable record behind the standalone Messaging page, independent of
@@ -413,7 +450,7 @@ async def send_message_to_buyer(
         provider=order.provider,
         direction="outbound",
         body=body.message,
-        external_message_id=result.external_message_id,
+        external_message_id=external_message_id,
         sent_by_user_id=current_user.local_user_id,
     ))
 
@@ -439,7 +476,7 @@ async def send_message_to_buyer(
         ))
 
     await db.commit()
-    return {"success": True, "external_message_id": result.external_message_id}
+    return {"success": True, "channel": channel, "external_message_id": external_message_id}
 
 
 @router.get("/messages")
