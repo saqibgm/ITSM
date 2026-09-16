@@ -396,10 +396,11 @@ class EbayConnector(CommerceConnector):
         0 messages since no real conversation exists yet) against this
         org's sandbox connection, 2026-09-15. Same item-scoping limitation
         as send_message above. Direction isn't in NormalizedMessage's own
-        shape — callers determine inbound-vs-outbound by comparing
-        raw_metadata['sender_id'] against order.buyer_name (the eBay
-        username), which this connector already uses as the durable buyer
-        identifier (see fetch_orders())."""
+        shape — this connector computes it itself (comparing SenderID
+        against order.buyer_name, the eBay username) and stashes it in
+        raw_metadata['direction'], since only each connector really knows
+        how to read its own notion of 'sender' (see marketplace_sync.py's
+        _sync_provider_messages, which just reads this key generically)."""
         item_id = _representative_item_id(order)
         if not item_id:
             return []
@@ -462,7 +463,13 @@ class EbayConnector(CommerceConnector):
                 external_case_id=None,
                 body=body_text,
                 sent_at=sent_at,
-                raw_metadata={"sender_id": sender_id},
+                # direction computed HERE, not by the generic sync loop —
+                # each connector's own notion of "sender" varies too much
+                # (eBay: username; Mercado Libre: numeric user_id; Allegro:
+                # a role enum) to share one comparison generically. eBay's
+                # buyer_name IS the eBay username (see fetch_orders()), so
+                # a direct string match is correct here.
+                raw_metadata={"direction": "inbound" if sender_id and sender_id == order.buyer_name else "outbound"},
             ))
         return results
 

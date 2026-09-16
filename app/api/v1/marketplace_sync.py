@@ -267,16 +267,23 @@ async def _sync_provider_returns(
 
 
 async def _sync_provider_messages(db: AsyncSession, connection: MarketplaceConnection, tenant_id) -> int:
-    """One connector's inbound message sync (2026-09-15) — currently only
-    meaningful for eBay (connectors/ebay.py's Trading API-backed
-    fetch_messages(); every other connector's default returns []). Loops
-    the tenant's already-synced orders for this connection and pulls each
-    one's message thread — Trading API's messaging calls are item-scoped,
-    so there's no single 'give me everything since X' feed to page through
-    the way orders/returns sync does; this is N calls for N orders, capped
-    by Trading API's documented 75-calls/60s rate limit (fine at this
-    org's current sandbox order volume, worth revisiting before any real
-    production scale)."""
+    """One connector's inbound message sync (2026-09-15) — meaningful for
+    every connector whose fetch_messages() isn't the base-class default
+    empty list (currently eBay, Mercado Libre, Allegro — see each
+    connector's module docstring). Loops the tenant's already-synced
+    orders for this connection and pulls each one's message thread — none
+    of these APIs expose a single 'give me everything since X' feed to
+    page through the way orders/returns sync does; this is N calls for N
+    orders (fine at this org's current sandbox order volume, worth
+    revisiting before any real production scale, especially against
+    eBay's documented 75-calls/60s Trading API rate limit).
+
+    Direction (inbound vs outbound) is decided by each connector itself,
+    not here — every connector's notion of "who sent this" is shaped
+    differently (eBay: username; Mercado Libre: numeric user_id; Allegro:
+    a role enum) to usefully compare generically. Each fetch_messages()
+    implementation stashes the verdict in raw_metadata['direction'].
+    """
     connector = get_connector(connection.provider)
     orders = (
         await db.execute(
@@ -291,8 +298,7 @@ async def _sync_provider_messages(db: AsyncSession, connection: MarketplaceConne
     for order in orders:
         messages = await connector.fetch_messages(connection, order)
         for normalized in messages:
-            sender_id = (normalized.raw_metadata or {}).get("sender_id")
-            direction = "inbound" if sender_id and sender_id == order.buyer_name else "outbound"
+            direction = (normalized.raw_metadata or {}).get("direction", "outbound")
             row = await ingestion.map_fetched_message(db, tenant_id, order, normalized, direction)
             if row is not None:
                 synced += 1

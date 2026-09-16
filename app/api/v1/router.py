@@ -43,6 +43,8 @@ from app.api.v1.marketplace_amazon import router as marketplace_amazon_router
 from app.api.v1.marketplace_walmart import router as marketplace_walmart_router
 from app.api.v1.marketplace_ebay import router as marketplace_ebay_router
 from app.api.v1.marketplace_etsy import router as marketplace_etsy_router
+from app.api.v1.marketplace_mercadolibre import router as marketplace_mercadolibre_router
+from app.api.v1.marketplace_allegro import router as marketplace_allegro_router
 from app.api.v1.marketplace_sync import router as marketplace_sync_router
 from app.api.v1.marketplace_settings import router as marketplace_settings_router
 
@@ -150,6 +152,9 @@ router.include_router(marketplace_etsy_router)     # no webhook route — signin
 # for Amazon/Walmart's client-credentials model). fetch_orders()/
 # fetch_returns() (manual/backfill path) work for all 5 pending sandbox
 # validation — none of this has been tested against a live account.
+
+router.include_router(marketplace_mercadolibre_router)  # messaging-only (no returns sync) — see connectors/mercadolibre.py; UNVERIFIED, no live credentials for this batch
+router.include_router(marketplace_allegro_router)        # messaging-only — see connectors/allegro.py; UNVERIFIED, no live credentials for this batch
 
 # Static-path settings route registered before the parametric {provider}/sync
 # route, same defensive ordering convention as tickets.py — no actual

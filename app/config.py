@@ -190,6 +190,70 @@ class Settings(BaseSettings):
     ETSY_REDIRECT_URI: str = ""
     ETSY_SCOPES: str = "transactions_r"
 
+    # --- Messaging-only marketplaces (2026-09-15) — added to give buyer
+    # communication coverage for marketplaces beyond the original 5-connector
+    # pilot batch, per explicit request. See each connector module's
+    # docstring for the "messaging-only, no orders/returns sync" scope note
+    # and the "UNVERIFIED — no live sandbox credentials" caveat that applies
+    # to every one of these, unlike the pilot batch which all got live
+    # sandbox testing.
+    MERCADOLIBRE_ENABLED: bool = False
+    MERCADOLIBRE_CLIENT_ID: str = ""
+    MERCADOLIBRE_CLIENT_SECRET: str = ""
+    MERCADOLIBRE_REDIRECT_URI: str = ""
+    # Country-specific — the seller's Mercado Libre account belongs to ONE
+    # site (.com.ar, .com.mx, .com.br, ...); the auth SCREEN is on that
+    # site's own subdomain even though token exchange is on the single
+    # global api.mercadolibre.com host. Defaulted to Argentina; override
+    # per the actual seller account's site.
+    MERCADOLIBRE_AUTH_DOMAIN: str = "https://auth.mercadolibre.com.ar"
+
+    ALLEGRO_ENABLED: bool = False
+    ALLEGRO_CLIENT_ID: str = ""
+    ALLEGRO_CLIENT_SECRET: str = ""
+    ALLEGRO_REDIRECT_URI: str = ""
+    # Allegro has a genuinely separate sandbox environment (not just a flag
+    # on the production host) — allegrosandbox.pl vs allegro.pl, both auth
+    # and API hosts. See connectors/allegro.py.
+    ALLEGRO_ENVIRONMENT: str = "sandbox"
+
+    CDISCOUNT_ENABLED: bool = False
+    # Cdiscount's marketplace API is run through Octopia (their marketplace
+    # tech platform, not Cdiscount-branded hosts) — client naming kept
+    # Cdiscount-prefixed since that's the marketplace a tenant is actually
+    # connecting to, even though the underlying API is Octopia's.
+    CDISCOUNT_SELLER_ID: str = ""
+    CDISCOUNT_API_KEY: str = ""
+
+    LAZADA_ENABLED: bool = False
+    LAZADA_CLIENT_ID: str = ""  # Lazada calls this "App Key"
+    LAZADA_CLIENT_SECRET: str = ""  # "App Secret"
+    LAZADA_REDIRECT_URI: str = ""
+
+    WILDBERRIES_ENABLED: bool = False
+    # No OAuth — a single long-lived API token generated per-seller in the
+    # Wildberries seller portal, submitted directly (client_credentials-
+    # style, same shape as this repo's existing Walmart connector).
+    WILDBERRIES_API_TOKEN: str = ""
+
+    # --- Thin, email-fallback-only marketplaces (2026-09-15) — none of
+    # these have ANY native messaging API (confirmed via research); each
+    # connector exists solely to capture a real buyer_email on the order so
+    # the existing email-fallback mechanism (marketplace_sync.py's
+    # send_message_to_buyer) has something to address. See each connector's
+    # module docstring.
+    BOLCOM_ENABLED: bool = False
+    BOLCOM_CLIENT_ID: str = ""
+    BOLCOM_CLIENT_SECRET: str = ""
+
+    ZALANDO_ENABLED: bool = False
+    ZALANDO_CLIENT_ID: str = ""
+    ZALANDO_CLIENT_SECRET: str = ""
+
+    FLIPKART_ENABLED: bool = False
+    FLIPKART_CLIENT_ID: str = ""
+    FLIPKART_CLIENT_SECRET: str = ""
+
     # Observability / hardening (S4.2)
     RATE_LIMIT_PER_MINUTE: int = 60
     RATE_LIMIT_BURST: int = 10
