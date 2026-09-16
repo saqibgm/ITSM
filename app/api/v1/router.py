@@ -47,6 +47,7 @@ from app.api.v1.marketplace_mercadolibre import router as marketplace_mercadolib
 from app.api.v1.marketplace_allegro import router as marketplace_allegro_router
 from app.api.v1.marketplace_cdiscount import router as marketplace_cdiscount_router
 from app.api.v1.marketplace_lazada import router as marketplace_lazada_router
+from app.api.v1.marketplace_wildberries import router as marketplace_wildberries_router
 from app.api.v1.marketplace_sync import router as marketplace_sync_router
 from app.api.v1.marketplace_settings import router as marketplace_settings_router
 
@@ -159,6 +160,7 @@ router.include_router(marketplace_mercadolibre_router)  # messaging-only (no ret
 router.include_router(marketplace_allegro_router)        # messaging-only — see connectors/allegro.py; UNVERIFIED, no live credentials for this batch
 router.include_router(marketplace_cdiscount_router)      # messaging-only — see connectors/cdiscount.py; UNVERIFIED, no live credentials for this batch
 router.include_router(marketplace_lazada_router)          # messaging-only — see connectors/lazada.py; UNVERIFIED, no live credentials for this batch
+router.include_router(marketplace_wildberries_router)     # messaging-only — see connectors/wildberries.py; UNVERIFIED, no live credentials for this batch
 
 # Static-path settings route registered before the parametric {provider}/sync
 # route, same defensive ordering convention as tickets.py — no actual

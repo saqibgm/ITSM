@@ -15,6 +15,7 @@ from app.services.marketplaces.connectors.lazada import lazada_connector
 from app.services.marketplaces.connectors.mercadolibre import mercadolibre_connector
 from app.services.marketplaces.connectors.shopify import shopify_connector
 from app.services.marketplaces.connectors.walmart import walmart_connector
+from app.services.marketplaces.connectors.wildberries import wildberries_connector
 
 CONNECTORS: dict[str, CommerceConnector] = {
     "shopify": shopify_connector,
@@ -28,6 +29,7 @@ CONNECTORS: dict[str, CommerceConnector] = {
     "allegro": allegro_connector,
     "cdiscount": cdiscount_connector,
     "lazada": lazada_connector,
+    "wildberries": wildberries_connector,
 }
 
 
