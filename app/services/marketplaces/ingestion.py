@@ -24,6 +24,7 @@ business rules against a live connector rather than in the abstract:
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -218,4 +219,51 @@ async def map_message_to_comment(
     return comment
 
 
-__all__ = ["map_order", "map_return_to_ticket", "map_message_to_comment"]
+async def map_fetched_message(
+    db: AsyncSession, tenant_id: UUID, order: MarketplaceOrder, message: NormalizedMessage, direction: str
+) -> Optional[MarketplaceMessage]:
+    """Persists one message pulled via a connector's fetch_messages()
+    manual/poll path (2026-09-15, currently only eBay's Trading API —
+    connectors/ebay.py) as a MarketplaceMessage row. Distinct from
+    map_message_to_comment above, which is the webhook/auto path and only
+    writes a TicketComment (no connector has a real inbound webhook wired
+    yet, so that path is currently unexercised by any of the 5 connectors).
+
+    Deduplicates on external_message_id — no DB-level unique constraint for
+    it (migration 0041 didn't add one; this was the only write path that
+    needed dedup at the time), checked here instead. direction is decided
+    by the CALLER (fetch_messages() returns raw sender info in
+    raw_metadata, not a direction field — see NormalizedMessage's shape),
+    not derived here, since only the caller knows how to tell "this
+    connector's buyer" from "us" for its own provider.
+    """
+    if message.external_message_id:
+        existing = (
+            await db.execute(
+                select(MarketplaceMessage).where(
+                    MarketplaceMessage.order_id == order.id,
+                    MarketplaceMessage.external_message_id == message.external_message_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return None
+
+    row = MarketplaceMessage(
+        tenant_id=tenant_id,
+        order_id=order.id,
+        provider=order.provider,
+        direction=direction,
+        body=message.body,
+        external_message_id=message.external_message_id,
+        # sent_at is NOT NULL with a server_default — but explicitly passing
+        # None here would send an explicit NULL (bypassing the server
+        # default), not omit the column, so it needs its own fallback.
+        sent_at=message.sent_at or datetime.now(timezone.utc),
+    )
+    db.add(row)
+    await db.flush()
+    return row
+
+
+__all__ = ["map_order", "map_return_to_ticket", "map_message_to_comment", "map_fetched_message"]

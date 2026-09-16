@@ -238,7 +238,7 @@ class WalmartConnector(CommerceConnector):
         safe path for now."""
         return None
 
-    async def send_message(self, connection: MarketplaceConnection, order_or_case_id: str, message: str) -> SendResult:
+    async def send_message(self, connection: MarketplaceConnection, order: "MarketplaceOrder", message: str) -> SendResult:
         return SendResult(
             success=False,
             error="Walmart has no buyer-messaging API at all — confirmed hard platform limitation (2026-09-14 doc research), not a gap to close",

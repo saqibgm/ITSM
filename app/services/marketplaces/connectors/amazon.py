@@ -309,7 +309,7 @@ class AmazonConnector(CommerceConnector):
     # sandbox validation before being trusted.
     # ------------------------------------------------------------------
 
-    async def send_message(self, connection: MarketplaceConnection, order_or_case_id: str, message: str) -> SendResult:
+    async def send_message(self, connection: MarketplaceConnection, order: "MarketplaceOrder", message: str) -> SendResult:
         """Confirmed via direct doc research (2026-09-14): Amazon's Messaging
         API is action-based, not a generic free-text send, same limitation
         eBay's send_message hit. getMessagingActionsForOrder returns which
@@ -334,7 +334,7 @@ class AmazonConnector(CommerceConnector):
         before this can be live-verified at all.
         """
         actions_body = await self._get(
-            connection, f"/messaging/v1/orders/{order_or_case_id}/messages"
+            connection, f"/messaging/v1/orders/{order.external_order_id}/messages"
         )
         if not actions_body:
             return SendResult(success=False, error="could not fetch available messaging actions for this order (see module docstring — likely a Messaging role/permission gap, not a transient failure)")
@@ -350,7 +350,7 @@ class AmazonConnector(CommerceConnector):
         client = await self._get_client()
         try:
             resp = await client.post(
-                f"{self._base_url()}/messaging/v1/orders/{order_or_case_id}/messages/confirmCustomizationDetails",
+                f"{self._base_url()}/messaging/v1/orders/{order.external_order_id}/messages/confirmCustomizationDetails",
                 headers={"x-amz-access-token": decrypt_secret(creds["access_token"])},
                 params={"marketplaceIds": settings.AMAZON_MARKETPLACE_IDS},
                 json={"text": message},

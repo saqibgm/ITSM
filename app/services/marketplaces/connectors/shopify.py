@@ -448,7 +448,7 @@ class ShopifyConnector(CommerceConnector):
             )
         return None
 
-    async def send_message(self, connection: MarketplaceConnection, order_or_case_id: str, message: str) -> SendResult:
+    async def send_message(self, connection: MarketplaceConnection, order: "MarketplaceOrder", message: str) -> SendResult:
         return SendResult(success=False, error="Shopify has no order-tied buyer-messaging API — not a gap, a platform limitation (Phase 0 finding)")
 
     def order_url(self, connection: MarketplaceConnection, external_order_id: str) -> Optional[str]:

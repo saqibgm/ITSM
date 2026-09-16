@@ -179,14 +179,33 @@ class CommerceConnector(ABC):
         return None
 
     async def send_message(
-        self, connection: "MarketplaceConnection", order_or_case_id: str, message: str
+        self, connection: "MarketplaceConnection", order: "MarketplaceOrder", message: str
     ) -> SendResult:
         """Outbound half of capability #3 — an agent's reply from ITSM, pushed
         to the marketplace. Only meaningful when messaging_capability is
         OUTBOUND_ONLY or FULL; connectors with NONE should not override this
         (the ingestion layer checks messaging_capability before calling it,
-        but this default makes the failure mode explicit rather than silent)."""
+        but this default makes the failure mode explicit rather than silent).
+
+        Takes the full order row, not just its id (2026-09-15 widening) —
+        eBay's real working messaging mechanism (Trading API, see ebay.py)
+        needs a line item's legacyItemId, which only lives in
+        order.order_lines, not a bare id string. Every other connector still
+        just reads order.external_order_id, same as before."""
         return SendResult(success=False, error=f"{self.provider} connector does not support sending messages")
+
+    async def fetch_messages(
+        self, connection: "MarketplaceConnection", order: "MarketplaceOrder"
+    ) -> list[NormalizedMessage]:
+        """Inbound half of capability #3 — pull the message history for ONE
+        order directly from the marketplace's API (manual/backfill path,
+        mirrors fetch_orders/fetch_returns' shape). Default empty list for
+        connectors with no real read channel (most of them — see each
+        connector's messaging_capability notes). Currently only overridden
+        by eBay (Trading API's GetMemberMessages, confirmed live 2026-09-15
+        — a different, WORKING mechanism from the Post-Order API's Inquiry
+        resource, which 404s in Sandbox entirely, see ebay.py)."""
+        return []
 
     def order_url(self, connection: "MarketplaceConnection", external_order_id: str) -> Optional[str]:
         """Deep link to this order's page in the marketplace's OWN seller

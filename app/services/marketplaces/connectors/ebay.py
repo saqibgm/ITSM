@@ -17,27 +17,40 @@ this repo's config should hold that RuName, not a URL, despite the setting's
 generic name — flagged here since it's an easy mistake to make by analogy
 with Shopify/Amazon's plain-URL redirect_uri.
 
-Per Phase 0 (plan §2): eBay's messaging is "likely full, not sandbox-
-validated" — the Post-Order API's case object carries inquiries, but
-whether that gives a clean send/receive message thread the way Amazon's
-Messaging API or Shopee's Chat API do hasn't been confirmed against a real
-sandbox case. messaging_capability is set to FULL to reflect that finding,
-but send_message()/inbound handling below are still unverified — same
-honesty flag as Amazon's send_message.
+Messaging (2026-09-15, superseding the Phase 0 "likely full, not sandbox-
+validated" note): the Post-Order API's Inquiry resource (what send_message
+originally tried) is confirmed DEAD in Sandbox — both search and send 404/are
+documented as unsupported there, no way to verify or use it in this
+environment. The REAL, WORKING mechanism is eBay's legacy XML Trading API —
+AddMemberMessageAAQToPartner (send) and GetMemberMessages (read) — genuine
+order-tied two-way buyer-seller messaging, confirmed LIVE against this org's
+real sandbox connection: both calls return HTTP 200 with real structured
+XML responses using the SAME OAuth token via the X-EBAY-API-IAF-TOKEN
+header (no separate "Auth'n'Auth" token needed). AddMemberMessageAAQToPartner
+returned a genuine business-logic error (ErrorCode 16202, "Invalid item —
+we did not find your item in our system") against a fake test ItemID —
+confirming the endpoint/auth/request-shape all work, it just needs a real
+listing ID. GetMemberMessages returned Ack=Success with 0 messages (no real
+data yet, but a clean, working response). Trading API is item-scoped, not
+order-scoped — needs a line item's legacyItemId, not the Fulfillment API's
+orderId, hence the extra field capture in fetch_orders() below.
 """
 
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from xml.etree import ElementTree
+from xml.sax.saxutils import escape as xml_escape
 
 import httpx
 
 from app.config import get_settings
-from app.models.marketplace import MarketplaceConnection
+from app.models.marketplace import MarketplaceConnection, MarketplaceOrder
 from app.services.marketplaces.connectors.base import (
     CommerceConnector,
     ConnectionResult,
     MessagingCapability,
+    NormalizedMessage,
     NormalizedOrder,
     NormalizedReturn,
     SendResult,
@@ -47,6 +60,34 @@ from app.services.marketplaces.crypto import decrypt_secret, encrypt_secret
 logger = logging.getLogger(__name__)
 
 _REFRESH_SKEW = timedelta(minutes=5)
+
+# eBay's legacy Trading API is XML/SOAP-flavored, not REST/JSON like every
+# other call in this connector — namespace needed to parse response elements
+# via ElementTree.
+_TRADING_XML_NS = {"e": "urn:ebay:apis:eBLBaseComponents"}
+
+
+def _trading_base_url(environment: str) -> str:
+    """Trading API's sandbox/production split — same hostnames as the REST
+    Sell APIs (_base_urls' api_base), but called out separately since the
+    two API families are otherwise unrelated (different auth header, XML vs
+    JSON) and it'd be confusing to reuse _base_urls' tuple-of-two shape for
+    a single URL."""
+    return "https://api.sandbox.ebay.com" if environment == "sandbox" else "https://api.ebay.com"
+
+
+def _representative_item_id(order: MarketplaceOrder) -> Optional[str]:
+    """Trading API's messaging calls (AddMemberMessageAAQToPartner,
+    GetMemberMessages) are ITEM-scoped, not order-scoped — need a line
+    item's legacyItemId, captured in order_lines by fetch_orders() below.
+    Uses the first line item as representative; a real limitation for
+    multi-item orders spanning different listings (the Trading API has no
+    concept of 'message about this whole order'), not worked around here."""
+    for line in order.order_lines or []:
+        item_id = line.get("legacy_item_id")
+        if item_id:
+            return str(item_id)
+    return None
 
 # Maps eBay's orderFulfillmentStatus onto NormalizedOrder's documented
 # 'new'|'acknowledged'|'shipped'|'delivered'|'cancelled' set (base.py) — was
@@ -215,7 +256,14 @@ class EbayConnector(CommerceConnector):
                 external_order_id=order.get("orderId"),
                 status=_map_ebay_status(order.get("orderFulfillmentStatus")),
                 order_lines=[
-                    {"title": li.get("lineItemId"), "quantity": li.get("quantity")}
+                    # title was mistakenly set to the raw lineItemId before
+                    # this fix (2026-09-15) — real product title is on
+                    # li["title"] per the Fulfillment API's LineItem schema.
+                    # legacyItemId is the classic numeric ItemID the Trading
+                    # API's messaging calls need (confirmed real field,
+                    # distinct from lineItemId) — captured here since
+                    # fetch_orders() is the only place this data is fetched.
+                    {"title": li.get("title"), "quantity": li.get("quantity"), "legacy_item_id": li.get("legacyItemId")}
                     for li in order.get("lineItems", [])
                 ],
                 total_amount=float(total["value"]) if total.get("value") else None,
@@ -280,56 +328,143 @@ class EbayConnector(CommerceConnector):
         stance as Walmart's connector."""
         return None
 
-    async def send_message(self, connection: MarketplaceConnection, order_or_case_id: str, message: str) -> SendResult:
-        """Two real findings from direct doc research (2026-09-14) that
-        narrow this a lot from the original "messaging_capability = FULL,
-        mechanism unconfirmed" state:
+    async def send_message(self, connection: MarketplaceConnection, order: MarketplaceOrder, message: str) -> SendResult:
+        """Uses the Trading API's AddMemberMessageAAQToPartner — see module
+        docstring for why this replaced the original Post-Order Inquiry
+        attempt (that resource is dead in Sandbox entirely; this one is
+        confirmed live and working). Item-scoped, not order-scoped — needs
+        a legacyItemId from one of this order's line items."""
+        item_id = _representative_item_id(order)
+        if not item_id:
+            return SendResult(success=False, error="no legacyItemId on record for this order's line items — cannot address the Trading API messaging call")
 
-        1. The Post-Order API's CASE resource (what fetch_returns() above
-           actually syncs — RETURN case type) has NO standalone "send a
-           message" endpoint at all. Comments can only be attached as a
-           side-effect of a resolving action (close/issue_refund/appeal) —
-           there's no way to just message a buyer about their return
-           independent of one of those actions.
-        2. The one real two-way messaging endpoint eBay does have —
-           POST /post-order/v2/inquiry/{inquiryId}/send_message — is scoped
-           to a DIFFERENT resource: "INR" (Item Not Received) inquiries, not
-           return/replacement cases. `order_or_case_id` here must be an
-           inquiryId, not the caseId fetch_returns() produces — this
-           connector doesn't currently fetch inquiries at all, only return
-           cases, so there's nothing wired up to supply one yet.
+        buyer_username = order.buyer_name  # eBay's buyer_name IS the eBay username, not a display name — see fetch_orders()' buyer_name note
+        if not buyer_username:
+            return SendResult(success=False, error="no buyer username on record for this order")
 
-        On top of that: eBay's own docs state this endpoint is explicitly
-        "not supported in the Sandbox environment" — meaning even with a
-        real inquiryId, this cannot be live-verified against this org's
-        sandbox connection the way everything else in this build was.
-        Implemented against the documented production shape; flagged as
-        unverified because it structurally CAN'T be verified here, not
-        because the work wasn't done.
-        """
         creds = await self._ensure_fresh_token(connection)
         if not creds:
             return SendResult(success=False, error="could not refresh token")
 
         settings = get_settings()
-        _, api_base = _base_urls(settings.EBAY_ENVIRONMENT)
-        if settings.EBAY_ENVIRONMENT == "sandbox":
-            return SendResult(success=False, error="eBay's inquiry send_message endpoint is not supported in sandbox — cannot test here, production-only")
-
+        xml_body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<AddMemberMessageAAQToPartnerRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
+            f"<ItemID>{xml_escape(item_id)}</ItemID>"
+            "<MemberMessage>"
+            "<Subject>Regarding your order</Subject>"
+            f"<Body>{xml_escape(message)}</Body>"
+            f"<RecipientID>{xml_escape(buyer_username)}</RecipientID>"
+            "<QuestionType>General</QuestionType>"
+            "</MemberMessage>"
+            "</AddMemberMessageAAQToPartnerRequest>"
+        )
         client = await self._get_client()
         try:
             resp = await client.post(
-                f"{api_base}/post-order/v2/inquiry/{order_or_case_id}/send_message",
-                headers={"Authorization": f"Bearer {decrypt_secret(creds['access_token'])}"},
-                json={"message": {"content": message}},
+                f"{_trading_base_url(settings.EBAY_ENVIRONMENT)}/ws/api.dll",
+                content=xml_body,
+                headers={
+                    "X-EBAY-API-SITEID": "0",
+                    "X-EBAY-API-COMPATIBILITY-LEVEL": "1155",
+                    "X-EBAY-API-CALL-NAME": "AddMemberMessageAAQToPartner",
+                    "X-EBAY-API-IAF-TOKEN": decrypt_secret(creds["access_token"]),
+                    "Content-Type": "text/xml",
+                },
             )
-            if resp.status_code != 200:
-                logger.warning("[eBay] send_message -> %d: %s", resp.status_code, resp.text[:200])
-                return SendResult(success=False, error=f"eBay returned {resp.status_code}")
         except Exception as exc:
-            logger.error("[eBay] send_message failed: %r", exc, exc_info=True)
+            logger.error("[eBay] AddMemberMessageAAQToPartner failed: %r", exc, exc_info=True)
             return SendResult(success=False, error=str(exc))
+
+        try:
+            root = ElementTree.fromstring(resp.text)
+        except ElementTree.ParseError:
+            logger.warning("[eBay] AddMemberMessageAAQToPartner non-XML response (status %d): %s", resp.status_code, resp.text[:200])
+            return SendResult(success=False, error=f"eBay returned a non-XML response (status {resp.status_code})")
+
+        ack = root.findtext("e:Ack", namespaces=_TRADING_XML_NS)
+        if ack not in ("Success", "Warning"):
+            short_msg = root.findtext(".//e:Errors/e:ShortMessage", namespaces=_TRADING_XML_NS) or "unknown error"
+            long_msg = root.findtext(".//e:Errors/e:LongMessage", namespaces=_TRADING_XML_NS) or ""
+            logger.warning("[eBay] AddMemberMessageAAQToPartner failed: %s %s", short_msg, long_msg)
+            return SendResult(success=False, error=f"{short_msg} {long_msg}".strip())
+
         return SendResult(success=True)
+
+    async def fetch_messages(self, connection: MarketplaceConnection, order: MarketplaceOrder) -> list[NormalizedMessage]:
+        """Trading API's GetMemberMessages — confirmed live (Ack=Success,
+        0 messages since no real conversation exists yet) against this
+        org's sandbox connection, 2026-09-15. Same item-scoping limitation
+        as send_message above. Direction isn't in NormalizedMessage's own
+        shape — callers determine inbound-vs-outbound by comparing
+        raw_metadata['sender_id'] against order.buyer_name (the eBay
+        username), which this connector already uses as the durable buyer
+        identifier (see fetch_orders())."""
+        item_id = _representative_item_id(order)
+        if not item_id:
+            return []
+
+        creds = await self._ensure_fresh_token(connection)
+        if not creds:
+            return []
+
+        settings = get_settings()
+        xml_body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<GetMemberMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
+            f"<ItemID>{item_id}</ItemID>"
+            "<MailMessageType>All</MailMessageType>"
+            "<DetailLevel>ReturnMessages</DetailLevel>"
+            "</GetMemberMessagesRequest>"
+        )
+        client = await self._get_client()
+        try:
+            resp = await client.post(
+                f"{_trading_base_url(settings.EBAY_ENVIRONMENT)}/ws/api.dll",
+                content=xml_body,
+                headers={
+                    "X-EBAY-API-SITEID": "0",
+                    "X-EBAY-API-COMPATIBILITY-LEVEL": "1155",
+                    "X-EBAY-API-CALL-NAME": "GetMemberMessages",
+                    "X-EBAY-API-IAF-TOKEN": decrypt_secret(creds["access_token"]),
+                    "Content-Type": "text/xml",
+                },
+            )
+        except Exception as exc:
+            logger.error("[eBay] GetMemberMessages failed: %r", exc, exc_info=True)
+            return []
+
+        try:
+            root = ElementTree.fromstring(resp.text)
+        except ElementTree.ParseError:
+            logger.warning("[eBay] GetMemberMessages non-XML response (status %d): %s", resp.status_code, resp.text[:200])
+            return []
+
+        if root.findtext("e:Ack", namespaces=_TRADING_XML_NS) not in ("Success", "Warning"):
+            logger.warning("[eBay] GetMemberMessages -> %s", resp.text[:300])
+            return []
+
+        results = []
+        for exchange in root.findall(".//e:MemberMessageExchange", namespaces=_TRADING_XML_NS):
+            sender_id = exchange.findtext(".//e:SenderID", namespaces=_TRADING_XML_NS)
+            body_text = exchange.findtext(".//e:Body", namespaces=_TRADING_XML_NS) or ""
+            created_raw = exchange.findtext(".//e:CreationDate", namespaces=_TRADING_XML_NS)
+            question_id = exchange.findtext(".//e:QuestionId", namespaces=_TRADING_XML_NS)
+            sent_at = None
+            if created_raw:
+                try:
+                    sent_at = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+            results.append(NormalizedMessage(
+                external_message_id=question_id or f"{item_id}:{created_raw}",
+                external_order_id=order.external_order_id,
+                external_case_id=None,
+                body=body_text,
+                sent_at=sent_at,
+                raw_metadata={"sender_id": sender_id},
+            ))
+        return results
 
     def order_url(self, connection: MarketplaceConnection, external_order_id: str) -> Optional[str]:
         """MEDIUM confidence — the /sh/ord/ Seller Hub orders prefix is

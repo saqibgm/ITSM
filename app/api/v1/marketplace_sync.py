@@ -266,9 +266,43 @@ async def _sync_provider_returns(
     return created, skipped
 
 
+async def _sync_provider_messages(db: AsyncSession, connection: MarketplaceConnection, tenant_id) -> int:
+    """One connector's inbound message sync (2026-09-15) — currently only
+    meaningful for eBay (connectors/ebay.py's Trading API-backed
+    fetch_messages(); every other connector's default returns []). Loops
+    the tenant's already-synced orders for this connection and pulls each
+    one's message thread — Trading API's messaging calls are item-scoped,
+    so there's no single 'give me everything since X' feed to page through
+    the way orders/returns sync does; this is N calls for N orders, capped
+    by Trading API's documented 75-calls/60s rate limit (fine at this
+    org's current sandbox order volume, worth revisiting before any real
+    production scale)."""
+    connector = get_connector(connection.provider)
+    orders = (
+        await db.execute(
+            select(MarketplaceOrder).where(
+                MarketplaceOrder.tenant_id == tenant_id,
+                MarketplaceOrder.connection_id == connection.id,
+            )
+        )
+    ).scalars().all()
+
+    synced = 0
+    for order in orders:
+        messages = await connector.fetch_messages(connection, order)
+        for normalized in messages:
+            sender_id = (normalized.raw_metadata or {}).get("sender_id")
+            direction = "inbound" if sender_id and sender_id == order.buyer_name else "outbound"
+            row = await ingestion.map_fetched_message(db, tenant_id, order, normalized, direction)
+            if row is not None:
+                synced += 1
+    await db.commit()
+    return synced
+
+
 @router.post("/sync")
 async def sync_all_marketplaces(
-    kind: Literal["orders", "returns"] = Query("orders"),
+    kind: Literal["orders", "returns", "messages"] = Query("orders"),
     current_user: CurrentUser = Depends(require_role(*_ADMIN_ROLES)),
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
@@ -307,22 +341,32 @@ async def sync_all_marketplaces(
                 results.append({"provider": connection.provider, "error": "sync_failed"})
         return {"kind": "orders", "results": results}
 
-    # kind == "returns"
-    bot_user_id = await get_or_create_marketplace_bot_user(db, current_user.tenant_id)
+    if kind == "returns":
+        bot_user_id = await get_or_create_marketplace_bot_user(db, current_user.tenant_id)
+        for connection in connections:
+            try:
+                created, skipped = await _sync_provider_returns(db, connection, current_user.tenant_id, bot_user_id, redis)
+                results.append({"provider": connection.provider, "tickets_created": created, "skipped_no_matching_order": skipped})
+            except Exception:
+                logger.error("marketplace_sync_all_returns_failed", extra={"provider": connection.provider}, exc_info=True)
+                results.append({"provider": connection.provider, "error": "sync_failed"})
+        return {"kind": "returns", "results": results}
+
+    # kind == "messages"
     for connection in connections:
         try:
-            created, skipped = await _sync_provider_returns(db, connection, current_user.tenant_id, bot_user_id, redis)
-            results.append({"provider": connection.provider, "tickets_created": created, "skipped_no_matching_order": skipped})
+            synced = await _sync_provider_messages(db, connection, current_user.tenant_id)
+            results.append({"provider": connection.provider, "synced": synced})
         except Exception:
-            logger.error("marketplace_sync_all_returns_failed", extra={"provider": connection.provider}, exc_info=True)
+            logger.error("marketplace_sync_all_messages_failed", extra={"provider": connection.provider}, exc_info=True)
             results.append({"provider": connection.provider, "error": "sync_failed"})
-    return {"kind": "returns", "results": results}
+    return {"kind": "messages", "results": results}
 
 
 @router.post("/{provider}/sync")
 async def sync_marketplace_now(
     provider: str,
-    kind: Literal["orders", "returns"] = Query("orders"),
+    kind: Literal["orders", "returns", "messages"] = Query("orders"),
     current_user: CurrentUser = Depends(require_role(*_ADMIN_ROLES)),
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis),
@@ -348,10 +392,14 @@ async def sync_marketplace_now(
         synced = await _sync_provider_orders(db, connection, current_user.tenant_id)
         return {"synced": synced, "kind": "orders", "provider": provider}
 
-    # kind == "returns"
-    bot_user_id = await get_or_create_marketplace_bot_user(db, current_user.tenant_id)
-    created, skipped = await _sync_provider_returns(db, connection, current_user.tenant_id, bot_user_id, redis)
-    return {"tickets_created": created, "skipped_no_matching_order": skipped, "kind": "returns", "provider": provider}
+    if kind == "returns":
+        bot_user_id = await get_or_create_marketplace_bot_user(db, current_user.tenant_id)
+        created, skipped = await _sync_provider_returns(db, connection, current_user.tenant_id, bot_user_id, redis)
+        return {"tickets_created": created, "skipped_no_matching_order": skipped, "kind": "returns", "provider": provider}
+
+    # kind == "messages"
+    synced = await _sync_provider_messages(db, connection, current_user.tenant_id)
+    return {"synced": synced, "kind": "messages", "provider": provider}
 
 
 class SendMessageRequest(BaseModel):
@@ -413,7 +461,7 @@ async def send_message_to_buyer(
     native_error = None
 
     if connector.messaging_capability != MessagingCapability.NONE:
-        result = await connector.send_message(connection, order.external_order_id, body.message)
+        result = await connector.send_message(connection, order, body.message)
         if result.success:
             channel = order.provider
             external_message_id = result.external_message_id
