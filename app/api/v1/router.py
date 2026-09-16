@@ -51,6 +51,9 @@ from app.api.v1.marketplace_wildberries import router as marketplace_wildberries
 from app.api.v1.marketplace_bolcom import router as marketplace_bolcom_router
 from app.api.v1.marketplace_zalando import router as marketplace_zalando_router
 from app.api.v1.marketplace_flipkart import router as marketplace_flipkart_router
+from app.api.v1.marketplace_bestbuy import router as marketplace_bestbuy_router
+from app.api.v1.marketplace_newegg import router as marketplace_newegg_router
+from app.api.v1.marketplace_shopee import router as marketplace_shopee_router
 from app.api.v1.marketplace_sync import router as marketplace_sync_router
 from app.api.v1.marketplace_settings import router as marketplace_settings_router
 
@@ -167,6 +170,10 @@ router.include_router(marketplace_wildberries_router)     # messaging-only — s
 router.include_router(marketplace_bolcom_router)          # thin, email-fallback-only — see connectors/bolcom.py; UNVERIFIED, no live credentials for this batch
 router.include_router(marketplace_zalando_router)         # thin, email-fallback-only — see connectors/zalando.py; UNVERIFIED, no live credentials for this batch
 router.include_router(marketplace_flipkart_router)        # thin, email-fallback-only — see connectors/flipkart.py; UNVERIFIED, no live credentials for this batch
+
+router.include_router(marketplace_bestbuy_router)          # messaging-only (Mirakl Inbox Threads) — see connectors/bestbuy.py; UNVERIFIED, no live credentials for this batch
+router.include_router(marketplace_newegg_router)           # thin, email-fallback-only — see connectors/newegg.py; UNVERIFIED, no live credentials for this batch
+router.include_router(marketplace_shopee_router)           # messaging-only (Seller Chat) — see connectors/shopee.py; UNVERIFIED, no live credentials for this batch
 
 # Static-path settings route registered before the parametric {provider}/sync
 # route, same defensive ordering convention as tickets.py — no actual

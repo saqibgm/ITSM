@@ -8,6 +8,7 @@ not a direct import of a specific connector module.
 from app.services.marketplaces.connectors.allegro import allegro_connector
 from app.services.marketplaces.connectors.amazon import amazon_connector
 from app.services.marketplaces.connectors.base import CommerceConnector
+from app.services.marketplaces.connectors.bestbuy import bestbuy_connector
 from app.services.marketplaces.connectors.bolcom import bolcom_connector
 from app.services.marketplaces.connectors.cdiscount import cdiscount_connector
 from app.services.marketplaces.connectors.ebay import ebay_connector
@@ -15,6 +16,8 @@ from app.services.marketplaces.connectors.etsy import etsy_connector
 from app.services.marketplaces.connectors.flipkart import flipkart_connector
 from app.services.marketplaces.connectors.lazada import lazada_connector
 from app.services.marketplaces.connectors.mercadolibre import mercadolibre_connector
+from app.services.marketplaces.connectors.newegg import newegg_connector
+from app.services.marketplaces.connectors.shopee import shopee_connector
 from app.services.marketplaces.connectors.shopify import shopify_connector
 from app.services.marketplaces.connectors.walmart import walmart_connector
 from app.services.marketplaces.connectors.wildberries import wildberries_connector
@@ -40,6 +43,11 @@ CONNECTORS: dict[str, CommerceConnector] = {
     "bolcom": bolcom_connector,
     "zalando": zalando_connector,
     "flipkart": flipkart_connector,
+    # Best Buy / Newegg / Shopee (2026-09-16) — see each connector
+    # module's docstring for scope/verification caveats.
+    "bestbuy": bestbuy_connector,
+    "newegg": newegg_connector,
+    "shopee": shopee_connector,
 }
 
 

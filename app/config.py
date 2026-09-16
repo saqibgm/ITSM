@@ -255,6 +255,26 @@ class Settings(BaseSettings):
     FLIPKART_CLIENT_SECRET: str = ""
     FLIPKART_REDIRECT_URI: str = ""
 
+    # --- Best Buy / Newegg / Shopee (2026-09-16) — see each connector's
+    # module docstring for research citations and confidence notes.
+    BESTBUY_ENABLED: bool = False
+    # No OAuth — a single API key generated per-seller in the Mirakl
+    # seller portal, submitted directly (client_credentials-style, same
+    # shape as this repo's Wildberries/Walmart connectors).
+    BESTBUY_API_KEY: str = ""
+
+    NEWEGG_ENABLED: bool = False
+    # Static credential headers, not request signing — same shape as
+    # this repo's Cdiscount connector.
+    NEWEGG_SELLER_ID: str = ""
+    NEWEGG_API_KEY: str = ""
+    NEWEGG_SECRET_KEY: str = ""
+
+    SHOPEE_ENABLED: bool = False
+    SHOPEE_PARTNER_ID: str = ""
+    SHOPEE_PARTNER_KEY: str = ""
+    SHOPEE_REDIRECT_URI: str = ""
+
     # Observability / hardening (S4.2)
     RATE_LIMIT_PER_MINUTE: int = 60
     RATE_LIMIT_BURST: int = 10
