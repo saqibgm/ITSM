@@ -48,6 +48,9 @@ from app.api.v1.marketplace_allegro import router as marketplace_allegro_router
 from app.api.v1.marketplace_cdiscount import router as marketplace_cdiscount_router
 from app.api.v1.marketplace_lazada import router as marketplace_lazada_router
 from app.api.v1.marketplace_wildberries import router as marketplace_wildberries_router
+from app.api.v1.marketplace_bolcom import router as marketplace_bolcom_router
+from app.api.v1.marketplace_zalando import router as marketplace_zalando_router
+from app.api.v1.marketplace_flipkart import router as marketplace_flipkart_router
 from app.api.v1.marketplace_sync import router as marketplace_sync_router
 from app.api.v1.marketplace_settings import router as marketplace_settings_router
 
@@ -161,6 +164,9 @@ router.include_router(marketplace_allegro_router)        # messaging-only — se
 router.include_router(marketplace_cdiscount_router)      # messaging-only — see connectors/cdiscount.py; UNVERIFIED, no live credentials for this batch
 router.include_router(marketplace_lazada_router)          # messaging-only — see connectors/lazada.py; UNVERIFIED, no live credentials for this batch
 router.include_router(marketplace_wildberries_router)     # messaging-only — see connectors/wildberries.py; UNVERIFIED, no live credentials for this batch
+router.include_router(marketplace_bolcom_router)          # thin, email-fallback-only — see connectors/bolcom.py; UNVERIFIED, no live credentials for this batch
+router.include_router(marketplace_zalando_router)         # thin, email-fallback-only — see connectors/zalando.py; UNVERIFIED, no live credentials for this batch
+router.include_router(marketplace_flipkart_router)        # thin, email-fallback-only — see connectors/flipkart.py; UNVERIFIED, no live credentials for this batch
 
 # Static-path settings route registered before the parametric {provider}/sync
 # route, same defensive ordering convention as tickets.py — no actual

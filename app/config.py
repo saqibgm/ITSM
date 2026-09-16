@@ -253,6 +253,7 @@ class Settings(BaseSettings):
     FLIPKART_ENABLED: bool = False
     FLIPKART_CLIENT_ID: str = ""
     FLIPKART_CLIENT_SECRET: str = ""
+    FLIPKART_REDIRECT_URI: str = ""
 
     # Observability / hardening (S4.2)
     RATE_LIMIT_PER_MINUTE: int = 60

@@ -8,14 +8,17 @@ not a direct import of a specific connector module.
 from app.services.marketplaces.connectors.allegro import allegro_connector
 from app.services.marketplaces.connectors.amazon import amazon_connector
 from app.services.marketplaces.connectors.base import CommerceConnector
+from app.services.marketplaces.connectors.bolcom import bolcom_connector
 from app.services.marketplaces.connectors.cdiscount import cdiscount_connector
 from app.services.marketplaces.connectors.ebay import ebay_connector
 from app.services.marketplaces.connectors.etsy import etsy_connector
+from app.services.marketplaces.connectors.flipkart import flipkart_connector
 from app.services.marketplaces.connectors.lazada import lazada_connector
 from app.services.marketplaces.connectors.mercadolibre import mercadolibre_connector
 from app.services.marketplaces.connectors.shopify import shopify_connector
 from app.services.marketplaces.connectors.walmart import walmart_connector
 from app.services.marketplaces.connectors.wildberries import wildberries_connector
+from app.services.marketplaces.connectors.zalando import zalando_connector
 
 CONNECTORS: dict[str, CommerceConnector] = {
     "shopify": shopify_connector,
@@ -30,6 +33,13 @@ CONNECTORS: dict[str, CommerceConnector] = {
     "cdiscount": cdiscount_connector,
     "lazada": lazada_connector,
     "wildberries": wildberries_connector,
+    # Thin, email-fallback-only marketplaces (2026-09-15) — no native
+    # messaging API exists for any of these (confirmed), so
+    # messaging_capability == NONE and the connector only exists to
+    # capture buyer_email for itsm-service's email fallback.
+    "bolcom": bolcom_connector,
+    "zalando": zalando_connector,
+    "flipkart": flipkart_connector,
 }
 
 
