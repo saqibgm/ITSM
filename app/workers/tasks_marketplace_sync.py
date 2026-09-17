@@ -59,7 +59,7 @@ async def _process_async(event_id: str) -> None:
     from sqlalchemy.orm import sessionmaker
 
     from app.config import get_settings
-    from app.models.marketplace import MarketplaceConnection, MarketplaceEvent
+    from app.models.marketplace import MarketplaceConnection, MarketplaceEvent, MarketplaceOrder
     from app.redis_client import get_worker_redis_client
     from app.services.marketplaces import ingestion
     from app.services.marketplaces.connectors.base import NormalizedMessage, NormalizedOrder, NormalizedReturn
@@ -97,7 +97,10 @@ async def _process_async(event_id: str) -> None:
 
                 try:
                     connector = get_connector(event.provider)
-                    normalized = connector.normalize_event(event.event_type, event.payload)
+                    normalized = await connector.normalize_event(
+                        event.event_type, event.payload,
+                        db=db, tenant_id=event.tenant_id, connection=connection,
+                    )
 
                     if normalized is None:
                         # Not an error — either an intentionally-ignored topic
@@ -131,12 +134,52 @@ async def _process_async(event_id: str) -> None:
                     elif isinstance(normalized, NormalizedMessage):
                         bot_user_id = await get_or_create_marketplace_bot_user(db, event.tenant_id)
                         comment = await ingestion.map_message_to_comment(db, event.tenant_id, bot_user_id, normalized)
+
+                        # Also persist to marketplace_messages (2026-09-17
+                        # fix) — map_message_to_comment above only reaches a
+                        # TicketComment, and only when a return/replacement
+                        # ticket already happens to be linked. Without this,
+                        # a webhook-delivered message (previously only
+                        # Shopify's real route; now also Amazon's inbound-
+                        # email bridge) would never show up on the
+                        # standalone Messaging page the way fetch_messages()-
+                        # sourced messages (eBay) already do via
+                        # map_fetched_message. Same table, same page, two
+                        # different write paths — this closes that gap for
+                        # every webhook-based connector, not just Amazon.
+                        order = None
+                        if normalized.external_order_id:
+                            order = (
+                                await db.execute(
+                                    select(MarketplaceOrder).where(
+                                        MarketplaceOrder.tenant_id == event.tenant_id,
+                                        MarketplaceOrder.external_order_id == normalized.external_order_id,
+                                    )
+                                )
+                            ).scalar_one_or_none()
+
+                        if order is not None:
+                            direction = (normalized.raw_metadata or {}).get("direction", "inbound")
+                            await ingestion.map_fetched_message(db, event.tenant_id, order, normalized, direction)
+
+                            # Amazon's send_message() reads this back off the
+                            # order to know which relay alias to reply to —
+                            # see connectors/amazon.py. No-op for every other
+                            # connector (raw_metadata just won't have this key).
+                            relay_alias = (normalized.raw_metadata or {}).get("relay_alias")
+                            if relay_alias:
+                                order.raw_metadata = {**(order.raw_metadata or {}), "amazon_relay_alias": relay_alias}
+
                         if comment is not None:
                             event.resulting_ticket_id = comment.ticket_id
+                            event.resulting_order_id = order.id if order else event.resulting_order_id
                             event.status = "comment_added"
+                        elif order is not None:
+                            event.resulting_order_id = order.id
+                            event.status = "message_recorded"
                         else:
                             event.status = "failed"
-                            event.error_message = "no ticket linked to this message's order/case"
+                            event.error_message = "no order or ticket found for this message yet"
 
                     event.processed_at = datetime.now(timezone.utc)
 

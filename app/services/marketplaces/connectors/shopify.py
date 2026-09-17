@@ -389,29 +389,25 @@ class ShopifyConnector(CommerceConnector):
     def parse_webhook(
         self, raw_payload: bytes, headers: dict[str, str]
     ) -> Optional[NormalizedOrder | NormalizedReturn | NormalizedMessage]:
-        """Signature verification happens in the webhook route (needs the raw
-        body + the connection's own secret before this is even called) —
-        this method assumes it's already been verified. Parses the HTTP-layer
-        bits (topic header, JSON body) and delegates to normalize_event(),
-        which is also called directly by the Celery task from a stored
-        MarketplaceEvent row (event_type + already-decoded payload dict) —
-        one mapping implementation, two entry points, not two copies of the
-        topic-dispatch logic to keep in sync."""
-        import json
+        """Not actually on the live path — never called anywhere in this
+        codebase (confirmed via grep, 2026-09-17). The real Shopify webhook
+        route (shopify_webhook() in marketplace_shopify.py) does its own
+        HMAC verification directly against the raw body/connection secret,
+        stores the event, and lets the Celery task call the async
+        normalize_event() below with the db/tenant_id/connection it actually
+        needs (2026-09-17 widening, see base.py) — this sync method can't
+        provide any of that. Kept only because CommerceConnector's ABC
+        requires an implementation; always returns None."""
+        return None
 
-        topic = headers.get("X-Shopify-Topic", "")
-        try:
-            payload = json.loads(raw_payload)
-        except Exception:
-            return None
-        return self.normalize_event(topic, payload)
-
-    def normalize_event(
-        self, event_type: str, payload: dict
+    async def normalize_event(
+        self, event_type: str, payload: dict, *, db=None, tenant_id=None, connection=None
     ) -> Optional[NormalizedOrder | NormalizedReturn | NormalizedMessage]:
         """Returns None for topics this connector ignores (GDPR compliance
         topics are handled at the route layer, not mapped into a Normalized*
-        shape here)."""
+        shape here). db/tenant_id/connection unused — Shopify's webhook
+        payload is already self-contained (see base.py's 2026-09-17 widening
+        note for why eBay's override needs them and this one doesn't)."""
         topic = event_type
         if topic in ("orders/create", "orders/updated"):
             money = (payload.get("total_price_set") or {}).get("shop_money") or {}

@@ -13,22 +13,25 @@ port, an existing, already-documented one:
    role/permission grant, never resolved as of that repo's last update.
    fetch_returns() below is a stub returning an empty list with that same
    blocker noted, not a fabricated implementation.
-2. Inbound webhook — Amazon has no HTTP webhook mechanism at all. Its
-   Notifications API delivers via AWS SQS, a fundamentally different
+2. Inbound webhook for ORDER/RETURN events — still none. Amazon's
+   Notifications API delivers those via AWS SQS, a fundamentally different
    consumption model (a queue poller/consumer, not a webhook route) that
    the chatbot repo also never built (same doc, same section). parse_webhook()
-   below always returns None; the "auto" path for Amazon isn't available
-   until an SQS consumer is built as a separate mechanism — a real future
-   phase, not something to fake here.
+   below always returns None; the "auto" path for orders/returns isn't
+   available until an SQS consumer is built as a separate mechanism — a
+   real future phase, not something to fake here.
 
-messaging_capability = OUTBOUND_ONLY (confirmed Phase 0 finding: SP-API's
-Messaging API can send a templated message to a buyer but has no endpoint to
-read what a buyer sent). send_message() is written against the documented
-API shape (getMessagingActionsForOrder → the specific send action) but has
-NO reference implementation to port — the chatbot repo never built this
-either. Flagged as unverified rather than presented with false confidence;
-needs sandbox validation before relying on it, same as everything else in
-this file that touches a live endpoint for the first time.
+messaging_capability = FULL as of 2026-09-17 (was OUTBOUND_ONLY). SP-API's
+Messaging API is confirmed send-only and mostly action-gated (see
+_send_via_sp_api()'s docstring) — that part of the Phase 0 finding still
+holds. What changed: Amazon officially forwards buyer-seller messages to a
+seller-configured email address, and replying via email (from the address
+registered on that account) is also policy-legitimate — a genuine two-way
+channel that doesn't touch SP-API at all. See
+marketplace_amazon_inbound_email.py (the inbound route),
+normalize_event()/_send_via_email_bridge() below. UNVERIFIED against live
+traffic — no seller account has exercised this path yet, same caveat as
+the SP-API messaging code it sits alongside.
 
 Never log access_token/refresh_token values.
 """
@@ -45,6 +48,7 @@ from app.services.marketplaces.connectors.base import (
     CommerceConnector,
     ConnectionResult,
     MessagingCapability,
+    NormalizedMessage,
     NormalizedOrder,
     NormalizedReturn,
     SendResult,
@@ -83,7 +87,15 @@ def _map_amazon_status(raw_order_status: Optional[str]) -> str:
 
 class AmazonConnector(CommerceConnector):
     provider = "amazon"
-    messaging_capability = MessagingCapability.OUTBOUND_ONLY
+    # Bumped from OUTBOUND_ONLY to FULL (2026-09-17) — SP-API's Messaging
+    # API is genuinely send-only and mostly action-gated (see send_message()
+    # below), but the inbound-email bridge (parse_webhook/normalize_event
+    # below, route in marketplace_amazon_inbound_email.py) gives a real,
+    # working two-way channel once a tenant points Seller Central's
+    # Buyer-Seller Messages notification at their connection's inbound
+    # address. UNVERIFIED against live traffic — no seller account has
+    # actually exercised this path yet.
+    messaging_capability = MessagingCapability.FULL
 
     def __init__(self):
         self._client: Optional[httpx.AsyncClient] = None
@@ -296,11 +308,38 @@ class AmazonConnector(CommerceConnector):
         return []
 
     def parse_webhook(self, raw_payload: bytes, headers: dict) -> None:
-        """Amazon has no inbound HTTP webhook mechanism — Notifications API
-        delivers via AWS SQS, a queue-consumer model, not a webhook route.
-        Always returns None; this connector's only sync path today is
-        fetch_orders() (manual/backfill)."""
+        """Still true for the SQS-based Notifications API specifically —
+        Amazon has no HTTP webhook mechanism for order/return events. The
+        inbound-message EMAIL bridge (marketplace_amazon_inbound_email.py)
+        is a deliberately separate, Amazon-specific route that does its own
+        parsing at the route layer (raw email bytes, not a marketplace
+        webhook payload shape) and calls normalize_event() directly rather
+        than going through this generic parse_webhook() entry point — so
+        this still correctly returns None."""
         return None
+
+    async def normalize_event(
+        self, event_type: str, payload: dict, *, db=None, tenant_id=None, connection=None
+    ) -> Optional[NormalizedMessage]:
+        """Dispatch target for the inbound-email bridge's 'inbound_email'
+        event_type (see marketplace_amazon_inbound_email.py) — called from
+        tasks_marketplace_sync.py's process_marketplace_event, same as every
+        other connector's webhook-sourced events. relay_alias is stashed in
+        raw_metadata so tasks_marketplace_sync.py can persist it onto the
+        matched MarketplaceOrder for send_message() below to read back.
+        db/tenant_id/connection unused here — the forwarded email already
+        carries everything needed (2026-09-17 base.py widening, added for
+        eBay's Message API which genuinely needs live lookups)."""
+        if event_type != "inbound_email":
+            return None
+        return NormalizedMessage(
+            external_message_id=payload.get("message_id"),
+            external_order_id=payload.get("order_id"),
+            external_case_id=None,
+            body=payload.get("body") or "",
+            sent_at=None,
+            raw_metadata={"direction": "inbound", "relay_alias": payload.get("from")},
+        )
 
     # ------------------------------------------------------------------
     # Messaging — outbound only (Phase 0 finding). UNVERIFIED: no reference
@@ -309,7 +348,7 @@ class AmazonConnector(CommerceConnector):
     # sandbox validation before being trusted.
     # ------------------------------------------------------------------
 
-    async def send_message(self, connection: MarketplaceConnection, order: "MarketplaceOrder", message: str) -> SendResult:
+    async def _send_via_sp_api(self, connection: MarketplaceConnection, order: "MarketplaceOrder", message: str) -> SendResult:
         """Confirmed via direct doc research (2026-09-14): Amazon's Messaging
         API is action-based, not a generic free-text send, same limitation
         eBay's send_message hit. getMessagingActionsForOrder returns which
@@ -331,17 +370,19 @@ class AmazonConnector(CommerceConnector):
         (confirmed live, 2026-09-14) — the Messaging role isn't granted to
         this app in the Solution Provider Portal. That's an app-permission
         gap, not something fixable in code; needs the role added + reconsent
-        before this can be live-verified at all.
+        before this can be live-verified at all. send_message() below tries
+        this first and falls back to the email bridge on any failure, so
+        nothing regresses once that role is eventually granted.
         """
         actions_body = await self._get(
             connection, f"/messaging/v1/orders/{order.external_order_id}/messages"
         )
         if not actions_body:
-            return SendResult(success=False, error="could not fetch available messaging actions for this order (see module docstring — likely a Messaging role/permission gap, not a transient failure)")
+            return SendResult(success=False, error="could not fetch available messaging actions for this order (likely a Messaging role/permission gap, not a transient failure)")
 
         actions = {a.get("name") for a in (actions_body.get("payload") or {}).get("_links", {}).get("actions", [])}
         if "confirmCustomizationDetails" not in actions:
-            return SendResult(success=False, error="no free-text messaging action available for this order (Amazon's Messaging API is action-based, not generic send — see module docstring)")
+            return SendResult(success=False, error="no free-text messaging action available for this order (Amazon's Messaging API is action-based, not generic send)")
 
         settings = get_settings()
         creds = await self._ensure_fresh_token(connection)
@@ -356,12 +397,56 @@ class AmazonConnector(CommerceConnector):
                 json={"text": message},
             )
             if resp.status_code not in (200, 201, 202):
-                logger.warning("[Amazon] send_message -> %d: %s", resp.status_code, resp.text[:200])
+                logger.warning("[Amazon] send_message (SP-API) -> %d: %s", resp.status_code, resp.text[:200])
                 return SendResult(success=False, error=f"Amazon returned {resp.status_code}")
         except Exception as exc:
-            logger.error("[Amazon] send_message failed: %r", exc, exc_info=True)
+            logger.error("[Amazon] send_message (SP-API) failed: %r", exc, exc_info=True)
             return SendResult(success=False, error=str(exc))
         return SendResult(success=True)
+
+    async def _send_via_email_bridge(self, connection: MarketplaceConnection, order: "MarketplaceOrder", message: str) -> SendResult:
+        """Reply through the inbound-email bridge (2026-09-17) — see this
+        module's messaging_capability comment and
+        marketplace_amazon_inbound_email.py. relay_alias is stashed onto
+        order.raw_metadata by tasks_marketplace_sync.py the moment an
+        inbound buyer email is received for this order; without at least
+        one inbound message on file there's nothing to reply TO yet (Amazon
+        requires threading through the buyer's own relay alias, not a
+        fixed address), so this fails honestly rather than guessing one.
+
+        Sent via the existing send_email_notification Celery task (plain
+        SMTP, no new provider integration) — same fire-and-forget pattern
+        already accepted by marketplace_sync.py's own email fallback for
+        Shopify/Etsy/Walmart, so success here means "queued", not "buyer
+        received it"."""
+        relay_alias = (order.raw_metadata or {}).get("amazon_relay_alias")
+        if not relay_alias:
+            return SendResult(success=False, error="no inbound buyer message on file for this order yet — nothing to reply to (see module docstring)")
+
+        settings = get_settings()
+        from app.workers.tasks_notifications import send_email_notification
+        send_email_notification.delay(
+            to_email=relay_alias,
+            from_email=f"amazon+{connection.id}@{settings.AMAZON_INBOUND_EMAIL_DOMAIN}",
+            template_name="marketplace_order_message",
+            context={
+                "title": f"Message about your Amazon order {order.external_order_id}",
+                "body": message,
+                "buyer_name": order.buyer_name,
+                "provider": "amazon",
+                "external_order_id": order.external_order_id,
+            },
+        )
+        return SendResult(success=True)
+
+    async def send_message(self, connection: MarketplaceConnection, order: "MarketplaceOrder", message: str) -> SendResult:
+        """Tries the native SP-API path first (works once the Messaging role
+        is granted); falls back to the email bridge, which works today
+        wherever a buyer has already emailed in."""
+        sp_api_result = await self._send_via_sp_api(connection, order, message)
+        if sp_api_result.success:
+            return sp_api_result
+        return await self._send_via_email_bridge(connection, order, message)
 
     def order_url(self, connection: MarketplaceConnection, external_order_id: str) -> Optional[str]:
         """HIGH confidence — orders-v3/order/{AmazonOrderId} is Seller

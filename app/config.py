@@ -77,6 +77,22 @@ class Settings(BaseSettings):
     SMTP_PASS: str = ""
     EMAIL_FROM_NAME: str = "ITSM Support"
 
+    # Amazon inbound-message email bridge (2026-09-17) — see
+    # connectors/amazon.py's module docstring. Amazon has no SP-API endpoint
+    # to read buyer messages, but officially forwards them to a seller-
+    # configured email address (Notification Preferences → Buyer-Seller
+    # Messages); each MarketplaceConnection gets its own address
+    # (amazon+{connection_id}@{AMAZON_INBOUND_EMAIL_DOMAIN}) so inbound mail
+    # can be routed back to the right tenant. Pointing the org's actual mail
+    # service at POST /webhooks/marketplace-email/amazon is a deployment
+    # step, not something this app can configure on its own — until that's
+    # wired up, the route 503s rather than silently accepting nothing.
+    AMAZON_INBOUND_EMAIL_DOMAIN: str = "mail.99technologies.com"
+    # Shared-secret query-param token checked on the inbound webhook route —
+    # a placeholder auth boundary until the org's mail service's own
+    # signing/auth scheme (unknown at build time) can be verified instead.
+    AMAZON_INBOUND_EMAIL_WEBHOOK_TOKEN: str = ""
+
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
@@ -171,7 +187,36 @@ class Settings(BaseSettings):
     # sell.fulfillment to isolate whether that's the actual blocker; if this
     # connects, fetch_returns() (which needs post-order) stays broken until
     # that entitlement is granted separately — flagged, not silently dropped.
-    EBAY_SCOPES: str = "https://api.ebay.com/oauth/api_scope/sell.fulfillment"
+    #
+    # commerce.message and commerce.notification.subscription added
+    # (2026-09-17) for the REST Message API rebuild — see connectors/
+    # ebay.py's module docstring. Real risk, same shape as the post-order
+    # issue above: this sandbox keyset's entitlement for these two scopes
+    # hasn't been confirmed live yet. If /connect starts failing with
+    # invalid_scope again, the diagnostic playbook is identical — drop back
+    # to fewer scopes to isolate which one isn't actually granted.
+    EBAY_SCOPES: str = (
+        "https://api.ebay.com/oauth/api_scope/sell.fulfillment "
+        "https://api.ebay.com/oauth/api_scope/commerce.message "
+        "https://api.ebay.com/oauth/api_scope/commerce.notification.subscription"
+    )
+
+    # eBay Notification API webhook bridge (2026-09-17) — see
+    # marketplace_ebay_notification.py / connectors/ebay.py. Each
+    # MarketplaceConnection gets its own destination endpoint (per-connection
+    # URL, same per-tenant-routing shape as the Amazon inbound-email bridge)
+    # so eBay's push notifications for NEW_MESSAGE/BUYER_QUESTION route back
+    # to the right tenant without depending on unconfirmed notification-
+    # payload fields.
+    EBAY_WEBHOOK_PUBLIC_BASE_URL: str = "https://api.99technologies.com"
+    # eBay's documented signature scheme (X-EBAY-SIGNATURE, ECDSA+SHA1 via
+    # a per-notification public key lookup) is implemented for real, not
+    # stubbed — but UNVERIFIED against live traffic (no sandbox account has
+    # exercised this path yet). This toggle exists as an operational safety
+    # valve specifically because of that — not a permanent bypass — so a
+    # subtly-wrong verification implementation can be diagnosed without
+    # losing the notifications entirely while it's debugged.
+    EBAY_NOTIFICATION_SIGNATURE_VERIFICATION_ENABLED: bool = True
 
     # Native marketplace integration — Etsy connector (pilot batch #5).
     ETSY_ENABLED: bool = False

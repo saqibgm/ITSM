@@ -154,12 +154,20 @@ async def amazon_connection_status(
     ).scalar_one_or_none()
     if not conn:
         return {"connection": None}
+    settings = get_settings()
     return {
         "connection": {
             "external_id": conn.external_id,
             "status": conn.status,
             "messaging_capability": conn.messaging_capability,
             "last_synced_at": conn.last_synced_at.isoformat() if conn.last_synced_at else None,
+            # Paste this into Seller Central → Notification Preferences →
+            # Buyer-Seller Messages to enable the inbound-email bridge (see
+            # connectors/amazon.py / marketplace_amazon_inbound_email.py).
+            # Only functional once the org's own mail service is configured
+            # to forward mail sent here to our webhook (deployment step,
+            # not something this app controls).
+            "inbound_email_address": f"amazon+{conn.id}@{settings.AMAZON_INBOUND_EMAIL_DOMAIN}",
         }
     }
 

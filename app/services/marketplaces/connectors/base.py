@@ -162,19 +162,34 @@ class CommerceConnector(ABC):
         None for events this connector chooses to ignore."""
         raise NotImplementedError
 
-    def normalize_event(
-        self, event_type: str, payload: dict
+    async def normalize_event(
+        self,
+        event_type: str,
+        payload: dict,
+        *,
+        db: Any,
+        tenant_id: Any,
+        connection: "MarketplaceConnection",
     ) -> Optional[NormalizedOrder | NormalizedReturn | NormalizedMessage]:
         """Same mapping as parse_webhook, but called from a stored
         MarketplaceEvent row (event_type + already-decoded payload dict) —
         the Celery task's entry point, since by the time it runs, signature
         verification already happened at the webhook route and the raw HTTP
         bytes/headers aren't available anymore, only what got persisted.
+
+        Async, with db/tenant_id/connection available (2026-09-17 widening,
+        same "widen when a real need shows up" pattern as send_message's
+        order-object widening) — eBay's Message API notifications are thin
+        pings, not payload-carrying events (see connectors/ebay.py): mapping
+        one requires a LIVE follow-up API call to fetch the actual message,
+        plus a DB lookup to resolve which MarketplaceOrder it belongs to.
+        Sync connectors that don't need either just ignore these params.
+
         Default None, matching connectors whose parse_webhook also always
         returns None (no webhook route wired yet — see each connector's
         module docstring for why). Connectors with a real webhook route
-        (currently only Shopify) override this with real topic-dispatch
-        logic; parse_webhook then delegates to it so there's one mapping
+        (Shopify, eBay) override this with real topic-dispatch logic;
+        parse_webhook then delegates to it so there's one mapping
         implementation, not two copies to keep in sync."""
         return None
 

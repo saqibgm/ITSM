@@ -37,6 +37,7 @@ def send_email_notification(
     to_email: str,
     template_name: str,
     context: dict,
+    from_email: str = None,
 ) -> None:
     """Send a transactional email using Jinja2 template and aiosmtplib.
 
@@ -45,6 +46,15 @@ def send_email_notification(
         template_name: Template stem, e.g. "ticket_assigned".
                        Resolves to app/templates/email/{template_name}.html
         context:       Template context variables.
+        from_email:    Override the default settings.SMTP_USER sender
+                       (2026-09-17, for the Amazon inbound-email bridge —
+                       Amazon requires replies come from the address
+                       actually registered on that seller account, which is
+                       per-connection, not the app-wide default). Sent as
+                       the literal From header — the SMTP relay must permit
+                       sending as this address (fine for sub-addresses on a
+                       domain the org controls, which is the only case this
+                       is used for today).
 
     Retries up to 3 times with exponential backoff on any exception.
     On max retries exceeded the task moves to the dead-letter queue and a
@@ -53,7 +63,7 @@ def send_email_notification(
     import asyncio
 
     try:
-        asyncio.run(_async_send_email(to_email=to_email, template_name=template_name, context=context))
+        asyncio.run(_async_send_email(to_email=to_email, template_name=template_name, context=context, from_email=from_email))
     except Exception as exc:
         logger.error(
             "email_send_failed",
@@ -72,6 +82,7 @@ async def _async_send_email(
     to_email: str,
     template_name: str,
     context: dict,
+    from_email: str = None,
 ) -> None:
     """Render Jinja2 template and deliver via aiosmtplib."""
     import aiosmtplib
@@ -101,7 +112,7 @@ async def _async_send_email(
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = f"{settings.EMAIL_FROM_NAME} <{settings.SMTP_USER}>"
+    msg["From"] = from_email or f"{settings.EMAIL_FROM_NAME} <{settings.SMTP_USER}>"
     msg["To"] = to_email
     msg.attach(MIMEText(html_body, "html"))
 

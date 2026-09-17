@@ -1,0 +1,665 @@
+<title>Marketplace Vendor Rate Sheet</title>
+<style>
+  :root {
+    --paper: #f1f4ec;
+    --paper-raised: #e8ede1;
+    --ink: #16211d;
+    --ink-soft: #4b5850;
+    --ink-faint: #7c8a80;
+    --accent-brass: #8c6a24;
+    --accent-brass-strong: #6e5119;
+    --accent-teal: #3f6b5d;
+    --line: #cdd6c6;
+    --line-soft: #dde3d5;
+    --chip-public-bg: #dbe8d5;
+    --chip-public-fg: #2f5c34;
+    --chip-partial-bg: #ede0c2;
+    --chip-partial-fg: #7a5a12;
+    --chip-gated-bg: #e6e1e8;
+    --chip-gated-fg: #564d6b;
+    --shadow-stamp: rgba(22, 33, 29, 0.16);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #101713;
+      --paper-raised: #17211b;
+      --ink: #e7ece4;
+      --ink-soft: #a3b3a8;
+      --ink-faint: #71857a;
+      --accent-brass: #d2a94e;
+      --accent-brass-strong: #e6c06e;
+      --accent-teal: #7fb2a0;
+      --line: #2a352d;
+      --line-soft: #212b23;
+      --chip-public-bg: #1f3324;
+      --chip-public-fg: #8fce9b;
+      --chip-partial-bg: #362d16;
+      --chip-partial-fg: #e0bb64;
+      --chip-gated-bg: #2a2530;
+      --chip-gated-fg: #c3b6d6;
+      --shadow-stamp: rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #101713;
+    --paper-raised: #17211b;
+    --ink: #e7ece4;
+    --ink-soft: #a3b3a8;
+    --ink-faint: #71857a;
+    --accent-brass: #d2a94e;
+    --accent-brass-strong: #e6c06e;
+    --accent-teal: #7fb2a0;
+    --line: #2a352d;
+    --line-soft: #212b23;
+    --chip-public-bg: #1f3324;
+    --chip-public-fg: #8fce9b;
+    --chip-partial-bg: #362d16;
+    --chip-partial-fg: #e0bb64;
+    --chip-gated-bg: #2a2530;
+    --chip-gated-fg: #c3b6d6;
+    --shadow-stamp: rgba(0, 0, 0, 0.4);
+  }
+
+  :root[data-theme="light"] {
+    --paper: #f1f4ec;
+    --paper-raised: #e8ede1;
+    --ink: #16211d;
+    --ink-soft: #4b5850;
+    --ink-faint: #7c8a80;
+    --accent-brass: #8c6a24;
+    --accent-brass-strong: #6e5119;
+    --accent-teal: #3f6b5d;
+    --line: #cdd6c6;
+    --line-soft: #dde3d5;
+    --chip-public-bg: #dbe8d5;
+    --chip-public-fg: #2f5c34;
+    --chip-partial-bg: #ede0c2;
+    --chip-partial-fg: #7a5a12;
+    --chip-gated-bg: #e6e1e8;
+    --chip-gated-fg: #564d6b;
+    --shadow-stamp: rgba(22, 33, 29, 0.16);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--paper);
+    color: var(--ink);
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15.5px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    padding: clamp(28px, 6vw, 72px) clamp(18px, 5vw, 40px) 80px;
+  }
+
+  .sheet {
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  .serif {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "URW Palladio L", Georgia, serif;
+  }
+
+  .num {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", "Consolas", "Liberation Mono", monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* ---------- masthead ---------- */
+
+  header.masthead {
+    border-bottom: 1.5px solid var(--ink);
+    padding-bottom: 20px;
+    margin-bottom: 10px;
+  }
+
+  .kicker {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--accent-brass);
+    font-weight: 600;
+    margin-bottom: 14px;
+  }
+
+  .kicker span:last-child {
+    color: var(--ink-faint);
+    letter-spacing: 0.08em;
+    font-weight: 500;
+  }
+
+  h1 {
+    font-size: clamp(28px, 4.4vw, 40px);
+    line-height: 1.12;
+    margin: 0 0 10px;
+    font-weight: 600;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  .dek {
+    margin: 0;
+    max-width: 62ch;
+    color: var(--ink-soft);
+    font-size: 16.5px;
+    line-height: 1.6;
+  }
+
+  /* ---------- intro ---------- */
+
+  .intro {
+    margin: 30px 0 44px;
+    max-width: 68ch;
+    color: var(--ink-soft);
+  }
+
+  .intro p {
+    margin: 0 0 14px;
+  }
+
+  .intro strong {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  /* ---------- section headers ---------- */
+
+  .section {
+    margin-top: 56px;
+  }
+
+  .section-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 12px;
+    margin-bottom: 22px;
+  }
+
+  .section-head h2 {
+    font-size: 22px;
+    margin: 0;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .section-head .tag {
+    font-size: 12px;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding-bottom: 3px;
+  }
+
+  .section-note {
+    margin: 0 0 20px;
+    color: var(--ink-soft);
+    font-size: 14.5px;
+    max-width: 66ch;
+  }
+
+  /* ---------- table ---------- */
+
+  .table-wrap {
+    overflow-x: auto;
+    margin-bottom: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 960px;
+  }
+
+  thead th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    font-weight: 600;
+    padding: 0 14px 10px 0;
+    border-bottom: 1.5px solid var(--ink);
+    white-space: nowrap;
+  }
+
+  thead th.num-col { text-align: right; }
+
+  tbody td {
+    padding: 16px 14px 16px 0;
+    border-bottom: 1px solid var(--line-soft);
+    vertical-align: top;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: 1px solid var(--line);
+  }
+
+  td.vendor {
+    white-space: nowrap;
+    font-weight: 600;
+    color: var(--ink);
+    padding-right: 20px;
+  }
+
+  td.vendor .aka {
+    display: block;
+    font-weight: 400;
+    font-size: 12px;
+    color: var(--ink-faint);
+    margin-top: 2px;
+  }
+
+  td.model {
+    color: var(--ink-soft);
+    font-size: 13.5px;
+    max-width: 15ch;
+  }
+
+  td.price {
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.5;
+    max-width: 30ch;
+  }
+
+  td.offering {
+    color: var(--ink-soft);
+    font-size: 13.5px;
+    max-width: 24ch;
+  }
+
+  td.api {
+    color: var(--ink-soft);
+    font-size: 13px;
+    max-width: 27ch;
+    font-style: italic;
+  }
+
+  td.api .yes { color: var(--accent-teal); font-style: normal; font-weight: 600; }
+  td.api .no { color: var(--ink-faint); font-style: normal; font-weight: 600; }
+
+  td.api strong {
+    font-style: normal;
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  td.api code {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", "Consolas", monospace;
+    font-style: normal;
+    font-size: 11.5px;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  td.disclosure {
+    white-space: nowrap;
+  }
+
+  .chip {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 3px 9px;
+    border-radius: 3px;
+  }
+
+  .chip-public { background: var(--chip-public-bg); color: var(--chip-public-fg); }
+  .chip-partial { background: var(--chip-partial-bg); color: var(--chip-partial-fg); }
+  .chip-gated { background: var(--chip-gated-bg); color: var(--chip-gated-fg); }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin: 14px 0 0;
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+
+  .legend .item { display: flex; align-items: center; gap: 6px; }
+
+  /* ---------- verdict stamp ---------- */
+
+  .verdict {
+    margin-top: 60px;
+    padding: 26px 28px;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent-brass);
+    border-radius: 2px;
+    position: relative;
+  }
+
+  .verdict .stamp-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    color: var(--accent-brass-strong);
+    margin-bottom: 10px;
+  }
+
+  .verdict p {
+    margin: 0 0 12px;
+    color: var(--ink);
+    font-size: 14.5px;
+    line-height: 1.65;
+    max-width: 70ch;
+  }
+
+  .verdict p:last-child { margin-bottom: 0; }
+
+  .verdict strong { color: var(--accent-teal); font-weight: 700; }
+
+  /* ---------- footer ---------- */
+
+  footer {
+    margin-top: 56px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+
+  footer a { color: var(--ink-faint); }
+
+  /* ---------- focus ---------- */
+
+  a:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--accent-teal);
+    outline-offset: 2px;
+  }
+
+  @media (max-width: 640px) {
+    thead th, tbody td { padding-right: 10px; }
+    td.model, td.offering { max-width: none; }
+  }
+</style>
+
+<div class="sheet">
+
+  <header class="masthead">
+    <div class="kicker">
+      <span>Vendor Rate Sheet · Commerce Messaging &amp; OMS</span>
+      <span>Researched Sept 2026</span>
+    </div>
+    <h1 class="serif">What the marketplace-integration market actually charges</h1>
+    <p class="dek">Three categories, priced separately: helpdesk bridges that carry buyer messages, unified APIs meant to be embedded into a product like ours, and seller-facing platforms a business runs on its own. They solve different problems and shouldn't be shopped against each other.</p>
+  </header>
+
+  <div class="intro">
+    <p>Every figure below came from a vendor's own pricing page or a review aggregator that cites one — not an estimate. Where a vendor hides its real number behind a sales call, that's marked rather than guessed at.</p>
+  </div>
+
+  <section class="section">
+    <div class="section-head">
+      <h2 class="serif">Messaging &amp; helpdesk bridges</h2>
+      <span class="tag">Buyer messages, in and out</span>
+    </div>
+    <p class="section-note">These read and send buyer messages tied to marketplace orders — the actual gap none of our native connectors close.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Vendor</th>
+            <th>Model</th>
+            <th class="num-col">Price</th>
+            <th>Disclosure</th>
+            <th>API access</th>
+            <th>Covers</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="vendor">eDesk<span class="aka">formerly xSellco</span></td>
+            <td class="model">Per agent / mo</td>
+            <td class="price num">Essential $39 · Growth $89 · Professional $119</td>
+            <td class="disclosure"><span class="chip chip-partial">Partial</span></td>
+            <td class="api"><span class="yes">Public API</span> (OpenAPI/Swagger) — but gated to the custom-quoted Enterprise tier only</td>
+            <td class="offering">Claims 250+ channels — broadest of the group</td>
+          </tr>
+          <tr>
+            <td class="vendor">ChannelReply</td>
+            <td class="model">Message volume</td>
+            <td class="price num">Standard $39/mo · Pro $79/mo (1,000 msgs, $0.04 over) · Enterprise $199/mo (4,000 msgs, $0.03 over)</td>
+            <td class="disclosure"><span class="chip chip-public">Public</span></td>
+            <td class="api"><span class="no">Not documented</span> — no confirmed custom-target/webhook support</td>
+            <td class="offering">Amazon, eBay, Shopify, Walmart, Back Market, Newegg, Etsy, WooCommerce, +Mirakl/Octopia (beta)</td>
+          </tr>
+          <tr>
+            <td class="vendor">Replyco</td>
+            <td class="model">Per user / mo, hybrid ticket caps</td>
+            <td class="price num">~$45–55/mo mid tiers · smallest plan from ~$65/user</td>
+            <td class="disclosure"><span class="chip chip-partial">Partial</span></td>
+            <td class="api"><span class="no">No public API</span> — docs.replyco.com covers only inbound integration setup (Amazon/eBay/WooCommerce → Replyco), nothing for building against Replyco's own data</td>
+            <td class="offering">Amazon, eBay, Etsy, Shopify, WooCommerce + email/social</td>
+          </tr>
+          <tr>
+            <td class="vendor">ReplyDesk</td>
+            <td class="model">Per agent / mo</td>
+            <td class="price num">Free (1 agent, 2 channels) · Professional $29/agent (annual) · Unlimited-channel tier $39/agent</td>
+            <td class="disclosure"><span class="chip chip-public">Public</span></td>
+            <td class="api"><span class="no">No API</span> — confirmed, functionality is web-app only, no developer interface at all</td>
+            <td class="offering">eBay, Amazon, Etsy, Shopify, WooCommerce, Gmail, Outlook, Facebook, Instagram</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend">
+      <span class="item"><span class="chip chip-public">Public</span> full rate card published</span>
+      <span class="item"><span class="chip chip-partial">Partial</span> base price known, key tier gated</span>
+      <span class="item"><span class="chip chip-gated">Gated</span> custom quote only</span>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2 class="serif">Unified &amp; embedded integration APIs</h2>
+      <span class="tag">Built to be embedded in a product like ours</span>
+    </div>
+    <p class="section-note">Developer-first middleware — no seller-facing UI of their own, meant to be called from inside someone else's software. This is the category itsm-service itself would actually integrate against, and it's API-first almost without exception. Still orders/products/inventory, not messaging.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Vendor</th>
+            <th>Model</th>
+            <th class="num-col">Price</th>
+            <th>Disclosure</th>
+            <th>API access</th>
+            <th>Covers</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="vendor">ChannelEngine</td>
+            <td class="model">% of GMV</td>
+            <td class="price num">No public rate card · no free trial · test account is sales-gated</td>
+            <td class="disclosure"><span class="chip chip-gated">Gated</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — Merchant API, header-key auth (<code>x-ce-key</code>), webhook registration</td>
+            <td class="offering">Orders, returns, shipments, product/listing sync</td>
+          </tr>
+          <tr>
+            <td class="vendor">API2Cart</td>
+            <td class="model">Usage-tiered (requests + stores)</td>
+            <td class="price num">Startup $500/mo (20K req, 10 stores) · Scaling $700/mo (200K req, 50 stores) · Rapid Growth $1,000/mo (500K req, 100 stores) · Enterprise custom (1M req, unlimited stores)</td>
+            <td class="disclosure"><span class="chip chip-public">Public</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — the product <em>is</em> the API: 100+ unified methods across 80+ carts/marketplaces, plus webhook event subscriptions</td>
+            <td class="offering">Orders, products, customers, inventory, shipments — no confirmed unified buyer-messaging method</td>
+          </tr>
+          <tr>
+            <td class="vendor">Patchworks</td>
+            <td class="model">Operation-volume tiered</td>
+            <td class="price num">No dollar figure published — Growth (150K ops/mo, 3 connectors), Professional (400K ops/mo, 4 connectors), Enterprise (custom ops, 8 connectors); all "enquire for pricing"</td>
+            <td class="disclosure"><span class="chip chip-gated">Gated</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — Core API manages flows/connectors/executions programmatically, plus event-driven webhooks</td>
+            <td class="offering">Ecommerce, ERP, WMS, 3PL, POS, and marketplace connectors — 125+ pre-built</td>
+          </tr>
+          <tr>
+            <td class="vendor">Flxpoint</td>
+            <td class="model">Custom quote</td>
+            <td class="price num">Not disclosed — priced per supplier count, order volume, and existing stack, demo-gated</td>
+            <td class="disclosure"><span class="chip chip-gated">Gated</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — public REST API for sources, channels, products, orders, fulfillment, shipments, plus 250+ pre-built API/EDI integrations</td>
+            <td class="offering">Multichannel dropship/fulfillment routing, B2B + B2C</td>
+          </tr>
+          <tr>
+            <td class="vendor">Anchanto</td>
+            <td class="model">Custom quote</td>
+            <td class="price num">Not disclosed — sales-gated, no self-serve tier</td>
+            <td class="disclosure"><span class="chip chip-gated">Gated</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — custom API connections on top of 200+ pre-built ones</td>
+            <td class="offering">Strong in APAC — pre-built to Shopee, Lazada, TikTok Shop specifically; directly relevant given our Shopee work</td>
+          </tr>
+          <tr>
+            <td class="vendor">Apideck</td>
+            <td class="model">Per connected consumer</td>
+            <td class="price num">Launch $599/mo (25 consumers) · Scale $1,299/mo (100 consumers) · Enterprise custom — per-consumer rate falls from $23.96 to $8.50 at higher volume</td>
+            <td class="disclosure"><span class="chip chip-public">Public</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — this is the product; multiple unified APIs incl. ecommerce, CRM, accounting; 30-day free trial, no sales call needed to start</td>
+            <td class="offering"><strong>Not ecommerce-specific</strong> — a general SaaS-integration unified API where ecommerce is one of several categories</td>
+          </tr>
+          <tr>
+            <td class="vendor">Cyclr</td>
+            <td class="model">Per-line-of-business tiers</td>
+            <td class="price num">MCP PaaS from $999/mo · Service Embedded iPaaS from $1,495/mo · Native Embedded iPaaS: Launch $1,595/mo, Grow $2,595/mo, Scale $7,195/mo</td>
+            <td class="disclosure"><span class="chip chip-public">Public</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — embedded iPaaS with 600+ connectors, visual integration builder exposed to end users too</td>
+            <td class="offering"><strong>Not ecommerce-specific</strong> — general embedded integration platform for any SaaS</td>
+          </tr>
+          <tr>
+            <td class="vendor">Celigo</td>
+            <td class="model">Flows + transaction volume</td>
+            <td class="price num">Third-party figures only (Vendr): Starter $1,000–1,500/mo · Professional $2,500–4,000/mo · Enterprise from $5,000/mo · median contract $14,787/yr</td>
+            <td class="disclosure"><span class="chip chip-partial">Partial</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — Integrator.io, API Builder on Professional+, pre-built connectors incl. NetSuite/Shopify/Amazon</td>
+            <td class="offering"><strong>Not ecommerce-specific</strong> — general iPaaS spanning ERP, ecommerce, CRM, support, marketing</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2 class="serif">Seller-facing OMS platforms</h2>
+      <span class="tag">A business runs this itself — not for embedding</span>
+    </div>
+    <p class="section-note">Hosted software a seller operates directly, with its own UI, dashboards, and workflows. Most also expose an API, but that's secondary to the product — useful as a cost anchor for the buy-vs-build conversation, not a fit for something itsm-service would integrate against.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Vendor</th>
+            <th>Model</th>
+            <th class="num-col">Price</th>
+            <th>Disclosure</th>
+            <th>API access</th>
+            <th>Covers</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="vendor">Rithum<span class="aka">formerly ChannelAdvisor</span></td>
+            <td class="model">Custom quote + revenue share</td>
+            <td class="price num">Base above $2,000/mo · typical mid-market year one: $30,000–$100,000</td>
+            <td class="disclosure"><span class="chip chip-gated">Gated</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — full REST + legacy SOAP v7 API at developer.channeladvisor.com; requires a separate developer account, orders/products endpoints documented</td>
+            <td class="offering">Enterprise multichannel commerce — best fit $50M+ GMV</td>
+          </tr>
+          <tr>
+            <td class="vendor">Sellercloud</td>
+            <td class="model">Order-volume tiered</td>
+            <td class="price num">From $1,199–1,349/mo + $0.30/order (first 5,000 fulfilled)</td>
+            <td class="disclosure"><span class="chip chip-public">Public</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — public REST API (developer.sellercloud.com), Bearer-token auth, Swagger-documented, orders/inventory/warehouses endpoints</td>
+            <td class="offering">350+ marketplace, ecommerce, carrier, and ERP integrations</td>
+          </tr>
+          <tr>
+            <td class="vendor">Linnworks</td>
+            <td class="model">Order-volume tiered</td>
+            <td class="price num">From ~$449/mo, scales with monthly order count</td>
+            <td class="disclosure"><span class="chip chip-public">Public</span></td>
+            <td class="api"><span class="yes">Open API</span> + pre-built connectors, advertised alongside 100+ integrations</td>
+            <td class="offering">100+ integrations incl. Amazon, eBay, Shopify, TikTok Shop</td>
+          </tr>
+          <tr>
+            <td class="vendor">Zentail</td>
+            <td class="model">SKU-count tiered</td>
+            <td class="price num">Base includes 2 marketplaces · +$50/mo per extra marketplace</td>
+            <td class="disclosure"><span class="chip chip-partial">Partial</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — Zentail Open API (developer.zentail.com, Stoplight-hosted), separate docs for sales-channel and 3PL integrations, token-based auth for registered partner apps</td>
+            <td class="offering">Multichannel listing management, product data mapping</td>
+          </tr>
+          <tr>
+            <td class="vendor">Extensiv<span class="aka">formerly Skubana</span></td>
+            <td class="model">Custom quote</td>
+            <td class="price num">Not disclosed</td>
+            <td class="disclosure"><span class="chip chip-gated">Gated</span></td>
+            <td class="api"><span class="yes">Confirmed</span> — Order Manager API (developer.extensiv.com), OAuth-style code+access-key token exchange, separate demo/production base URLs</td>
+            <td class="offering">Inventory/order management, no user or channel caps</td>
+          </tr>
+          <tr>
+            <td class="vendor">Codisto<span class="aka">now Shopify Marketplace Connect</span></td>
+            <td class="model">Shopify App Store</td>
+            <td class="price num">Not public</td>
+            <td class="disclosure"><span class="chip chip-gated">Gated</span></td>
+            <td class="api"><span class="no">N/A</span> — operates as a Shopify app, not a standalone API product</td>
+            <td class="offering">Amazon, Walmart, eBay, Target Plus — Shopify-catalog-first sync</td>
+          </tr>
+          <tr>
+            <td class="vendor">Sellbrite<span class="aka">GoDaddy</span></td>
+            <td class="model">Order-volume tiered</td>
+            <td class="price num">Free → Pro 100 $29/mo → Pro 2K $179/mo · +$19/mo FBA add-on</td>
+            <td class="disclosure"><span class="chip chip-public">Public</span></td>
+            <td class="api"><span class="yes">Confirmed</span>, but restricted — RESTful API (developer.sellbrite.com) on all paid plans, <strong>except Sellbrite-for-Shopify users, who don't get API access at all</strong></td>
+            <td class="offering">Amazon, eBay, Walmart, Etsy, Shopify + others — cheapest full OMS</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="verdict">
+    <div class="stamp-label">Read on it</div>
+    <p>For the actual messaging gap, all four vendors were checked directly. <strong>eDesk</strong> is the only one with a real, documented API — and it's paywalled to a custom-quoted Enterprise tier. <strong>ChannelReply</strong>, <strong>Replyco</strong>, and <strong>ReplyDesk</strong> have <strong>no confirmed API at all</strong> — they're web-app-only helpdesks with integration setup guides for pulling marketplace data <em>in</em>, not a documented way to build against their data. That collapses this category to one real option, and its price is unknown until a sales call happens.</p>
+    <p>The other two tables tell the opposite story: API access is nearly universal — <strong>every vendor across both</strong> has a confirmed, documented developer API except Codisto (not a standalone product). <strong>API2Cart</strong> and <strong>Apideck</strong> stand out as the purest cases: no UI product at all, the API <em>is</em> the offering, and both publish a fully transparent rate card down to the entry tier — rare in this sheet. But <strong>none of the 15 vendors across these two tables read or send a buyer message</strong>. Architecturally, the unified-API table is the closer analog to what itsm-service would actually integrate against — but it still doesn't close the messaging gap, it just closes a different one.</p>
+    <p>Worth flagging specifically: <strong>Anchanto</strong> has pre-built connectors to Shopee, Lazada, and TikTok Shop by name — directly relevant given the Shopee connector already shipped this session — but it's fully sales-gated with no public number at all, and (like the rest of this table) has no confirmed messaging capability either.</p>
+    <p><strong>Net effect:</strong> the messaging gap and the API-access gap are the same problem. Nothing in this sheet is a documented, API-driven, publicly-priced messaging bridge — that combination doesn't exist in this market. The next real step is the eDesk Enterprise sales conversation, or a direct question to ChannelReply/Replyco/ReplyDesk asking outright whether an undocumented/partner-only API exists that their public docs don't show.</p>
+  </div>
+
+  <footer>
+    <span>itsm-service · marketplace integration research</span>
+    <span>Figures self-reported by vendors or cited review aggregators — verify before committing spend</span>
+  </footer>
+
+</div>

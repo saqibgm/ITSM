@@ -17,32 +17,66 @@ this repo's config should hold that RuName, not a URL, despite the setting's
 generic name — flagged here since it's an easy mistake to make by analogy
 with Shopify/Amazon's plain-URL redirect_uri.
 
-Messaging (2026-09-15, superseding the Phase 0 "likely full, not sandbox-
-validated" note): the Post-Order API's Inquiry resource (what send_message
-originally tried) is confirmed DEAD in Sandbox — both search and send 404/are
-documented as unsupported there, no way to verify or use it in this
-environment. The REAL, WORKING mechanism is eBay's legacy XML Trading API —
-AddMemberMessageAAQToPartner (send) and GetMemberMessages (read) — genuine
-order-tied two-way buyer-seller messaging, confirmed LIVE against this org's
-real sandbox connection: both calls return HTTP 200 with real structured
-XML responses using the SAME OAuth token via the X-EBAY-API-IAF-TOKEN
-header (no separate "Auth'n'Auth" token needed). AddMemberMessageAAQToPartner
-returned a genuine business-logic error (ErrorCode 16202, "Invalid item —
-we did not find your item in our system") against a fake test ItemID —
-confirming the endpoint/auth/request-shape all work, it just needs a real
-listing ID. GetMemberMessages returned Ack=Success with 0 messages (no real
-data yet, but a clean, working response). Trading API is item-scoped, not
-order-scoped — needs a line item's legacyItemId, not the Fulfillment API's
-orderId, hence the extra field capture in fetch_orders() below.
+Messaging — REBUILT 2026-09-17 on eBay's REST Message API
+(commerce/message/v1), which eBay itself documents as replacing
+AddMemberMessageAAQToPartner, AddMemberMessageRTQ,
+AddMemberMessagesAAQToBidder, DeleteMyMessages, GetMemberMessages,
+GetMyMessages, and ReviseMyMessages — the XML Trading API calls this
+connector used until now (confirmed live 2026-09-15, see git history;
+replaced rather than kept as a fallback because eBay itself frames the old
+calls as superseded, not merely deprecated-but-supported). Confirmed via
+eBay's own developer docs (2026-09-17):
+- POST /send_message — start or continue a conversation. One of
+  conversationId/otherPartyUsername required, plus messageText. An
+  OPTIONAL reference{referenceType: "LISTING", referenceId} container ties
+  a message to a listing — optional is the key change from Trading API's
+  MANDATORY item-scoping, though this connector still passes a
+  legacyItemId when one's on hand (best-effort, not required to send).
+- GET /conversation — list conversations (conversation_type=FROM_MEMBERS
+  for buyer-seller, vs FROM_EBAY for eBay-authored ones).
+- GET /conversation/{conversation_id} — messages within one conversation;
+  MessageDetail fields: createdDate, messageBody, messageId,
+  senderUsername, recipientUsername.
+- POST /update_conversation — mark read/archived/deleted.
+Auth scope: https://api.ebay.com/oauth/api_scope/commerce.message (added
+to EBAY_SCOPES, 2026-09-17 — see config.py's comment on the real risk of
+hitting the same invalid_scope entitlement wall as sell.post-order did).
+
+UNVERIFIED against live traffic — no sandbox account has exercised these
+specific endpoints yet (unlike the Trading API calls this replaces, which
+WERE live-confirmed). The exact JSON field names for getConversations'
+list-level items (specifically whether a conversation carries the other
+party's username directly, needed to match a conversation to an order's
+buyer) weren't confirmed in research — fetch_messages() below is written
+defensively (degrades to an empty list rather than guessing a wrong field
+name) rather than presented with false confidence.
+
+Real-time push (2026-09-17, genuinely new capability): eBay's Notification
+API gained NEW_MESSAGE and BUYER_QUESTION topics in the same Q4 2025
+release (v1.6.5, 2025-11-17, confirmed via eBay's release notes) — a real
+webhook mechanism, unlike anything previously available for eBay messaging
+in this build. See register_webhooks()/normalize_event() below and
+marketplace_ebay_notification.py (the inbound route). Treated as a thin
+"something changed, go check" ping rather than a payload-carrying event —
+the notification body's exact schema for these two specific topics wasn't
+confirmed in research (eBay ships full schemas as downloadable AsyncAPI
+contracts, not fetchable via this build's research tooling), so rather
+than guess field names for the actual message content, a notification
+triggers a live getConversations(UNREAD) call to fetch the real thing.
+This sidesteps the one unconfirmed piece entirely and is a legitimate,
+common "notify then fetch" webhook pattern in its own right.
 """
 
+import base64
+import hashlib
 import logging
+import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from xml.etree import ElementTree
-from xml.sax.saxutils import escape as xml_escape
 
 import httpx
+from sqlalchemy import select
 
 from app.config import get_settings
 from app.models.marketplace import MarketplaceConnection, MarketplaceOrder
@@ -60,20 +94,10 @@ from app.services.marketplaces.crypto import decrypt_secret, encrypt_secret
 logger = logging.getLogger(__name__)
 
 _REFRESH_SKEW = timedelta(minutes=5)
-
-# eBay's legacy Trading API is XML/SOAP-flavored, not REST/JSON like every
-# other call in this connector — namespace needed to parse response elements
-# via ElementTree.
-_TRADING_XML_NS = {"e": "urn:ebay:apis:eBLBaseComponents"}
-
-
-def _trading_base_url(environment: str) -> str:
-    """Trading API's sandbox/production split — same hostnames as the REST
-    Sell APIs (_base_urls' api_base), but called out separately since the
-    two API families are otherwise unrelated (different auth header, XML vs
-    JSON) and it'd be confusing to reuse _base_urls' tuple-of-two shape for
-    a single URL."""
-    return "https://api.sandbox.ebay.com" if environment == "sandbox" else "https://api.ebay.com"
+# getPublicKey's response is cached in-process for this long (eBay's own
+# recommendation, see connectors/ebay.py's verify_notification_signature).
+_PUBLIC_KEY_CACHE_TTL_SECONDS = 3600
+_public_key_cache: dict[str, tuple[float, str, str]] = {}  # kid -> (cached_at, algorithm, pem_or_der_key)
 
 
 def _representative_item_id(order: MarketplaceOrder) -> Optional[str]:
@@ -321,24 +345,26 @@ class EbayConnector(CommerceConnector):
         return results
 
     def parse_webhook(self, raw_payload: bytes, headers: dict) -> None:
-        """eBay does have a Platform Notifications / webhook mechanism, but
-        its signature scheme wasn't confirmed in this org's research (Phase 0
-        focused on messaging capability, not notification signing). Returns
-        None — do not wire a webhook route until that's confirmed, same
-        stance as Walmart's connector."""
+        """Still None for the generic marketplace-webhook shape — eBay's
+        Notification API is a deliberately separate mechanism (its own
+        challenge-response handshake, its own per-connection destination
+        URL, its own signature scheme) with its own dedicated route,
+        marketplace_ebay_notification.py, which calls normalize_event()
+        directly rather than going through this generic entry point. Order/
+        return events still have no eBay webhook at all (unchanged from
+        before) — this method covers that gap only."""
         return None
 
     async def send_message(self, connection: MarketplaceConnection, order: MarketplaceOrder, message: str) -> SendResult:
-        """Uses the Trading API's AddMemberMessageAAQToPartner — see module
-        docstring for why this replaced the original Post-Order Inquiry
-        attempt (that resource is dead in Sandbox entirely; this one is
-        confirmed live and working). Item-scoped, not order-scoped — needs
-        a legacyItemId from one of this order's line items."""
-        item_id = _representative_item_id(order)
-        if not item_id:
-            return SendResult(success=False, error="no legacyItemId on record for this order's line items — cannot address the Trading API messaging call")
-
-        buyer_username = order.buyer_name  # eBay's buyer_name IS the eBay username, not a display name — see fetch_orders()' buyer_name note
+        """REST Message API's sendMessage — see module docstring for why
+        this replaced the Trading API calls. Keyed on otherPartyUsername
+        (eBay's buyer_name IS the eBay username — see fetch_orders()), not
+        conversationId, so this always targets "the conversation with this
+        buyer" whether or not one already exists. A legacyItemId is
+        attached via the OPTIONAL reference container when available
+        (best-effort context, not required to send — the real change from
+        Trading API's mandatory item-scoping)."""
+        buyer_username = order.buyer_name
         if not buyer_username:
             return SendResult(success=False, error="no buyer username on record for this order")
 
@@ -347,62 +373,41 @@ class EbayConnector(CommerceConnector):
             return SendResult(success=False, error="could not refresh token")
 
         settings = get_settings()
-        xml_body = (
-            '<?xml version="1.0" encoding="utf-8"?>'
-            '<AddMemberMessageAAQToPartnerRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
-            f"<ItemID>{xml_escape(item_id)}</ItemID>"
-            "<MemberMessage>"
-            "<Subject>Regarding your order</Subject>"
-            f"<Body>{xml_escape(message)}</Body>"
-            f"<RecipientID>{xml_escape(buyer_username)}</RecipientID>"
-            "<QuestionType>General</QuestionType>"
-            "</MemberMessage>"
-            "</AddMemberMessageAAQToPartnerRequest>"
-        )
+        _, api_base = _base_urls(settings.EBAY_ENVIRONMENT)
+        body = {"otherPartyUsername": buyer_username, "messageText": message}
+        item_id = _representative_item_id(order)
+        if item_id:
+            body["reference"] = {"referenceType": "LISTING", "referenceId": item_id}
+
         client = await self._get_client()
         try:
             resp = await client.post(
-                f"{_trading_base_url(settings.EBAY_ENVIRONMENT)}/ws/api.dll",
-                content=xml_body,
+                f"{api_base}/commerce/message/v1/send_message",
                 headers={
-                    "X-EBAY-API-SITEID": "0",
-                    "X-EBAY-API-COMPATIBILITY-LEVEL": "1155",
-                    "X-EBAY-API-CALL-NAME": "AddMemberMessageAAQToPartner",
-                    "X-EBAY-API-IAF-TOKEN": decrypt_secret(creds["access_token"]),
-                    "Content-Type": "text/xml",
+                    "Authorization": f"Bearer {decrypt_secret(creds['access_token'])}",
+                    "Content-Type": "application/json",
                 },
+                json=body,
             )
+            if resp.status_code not in (200, 201, 204):
+                logger.warning("[eBay] send_message -> %d: %s", resp.status_code, resp.text[:300])
+                return SendResult(success=False, error=f"eBay returned {resp.status_code}: {resp.text[:200]}")
+            result_body = resp.json() if resp.content else {}
         except Exception as exc:
-            logger.error("[eBay] AddMemberMessageAAQToPartner failed: %r", exc, exc_info=True)
+            logger.error("[eBay] send_message failed: %r", exc, exc_info=True)
             return SendResult(success=False, error=str(exc))
 
-        try:
-            root = ElementTree.fromstring(resp.text)
-        except ElementTree.ParseError:
-            logger.warning("[eBay] AddMemberMessageAAQToPartner non-XML response (status %d): %s", resp.status_code, resp.text[:200])
-            return SendResult(success=False, error=f"eBay returned a non-XML response (status {resp.status_code})")
-
-        ack = root.findtext("e:Ack", namespaces=_TRADING_XML_NS)
-        if ack not in ("Success", "Warning"):
-            short_msg = root.findtext(".//e:Errors/e:ShortMessage", namespaces=_TRADING_XML_NS) or "unknown error"
-            long_msg = root.findtext(".//e:Errors/e:LongMessage", namespaces=_TRADING_XML_NS) or ""
-            logger.warning("[eBay] AddMemberMessageAAQToPartner failed: %s %s", short_msg, long_msg)
-            return SendResult(success=False, error=f"{short_msg} {long_msg}".strip())
-
-        return SendResult(success=True)
+        return SendResult(success=True, external_message_id=result_body.get("messageId") or result_body.get("conversationId"))
 
     async def fetch_messages(self, connection: MarketplaceConnection, order: MarketplaceOrder) -> list[NormalizedMessage]:
-        """Trading API's GetMemberMessages — confirmed live (Ack=Success,
-        0 messages since no real conversation exists yet) against this
-        org's sandbox connection, 2026-09-15. Same item-scoping limitation
-        as send_message above. Direction isn't in NormalizedMessage's own
-        shape — this connector computes it itself (comparing SenderID
-        against order.buyer_name, the eBay username) and stashes it in
-        raw_metadata['direction'], since only each connector really knows
-        how to read its own notion of 'sender' (see marketplace_sync.py's
-        _sync_provider_messages, which just reads this key generically)."""
-        item_id = _representative_item_id(order)
-        if not item_id:
+        """REST Message API's getConversations + getConversation — manual/
+        backfill path (mirrors the "sync now" pattern every other connector
+        uses this method for). UNVERIFIED against live traffic — see module
+        docstring on the getConversations list-item field-name uncertainty;
+        written defensively (checks several plausible field paths for the
+        other party's username) rather than trusting one guessed shape."""
+        buyer_username = order.buyer_name
+        if not buyer_username:
             return []
 
         creds = await self._ensure_fresh_token(connection)
@@ -410,47 +415,55 @@ class EbayConnector(CommerceConnector):
             return []
 
         settings = get_settings()
-        xml_body = (
-            '<?xml version="1.0" encoding="utf-8"?>'
-            '<GetMemberMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
-            f"<ItemID>{item_id}</ItemID>"
-            "<MailMessageType>All</MailMessageType>"
-            "<DetailLevel>ReturnMessages</DetailLevel>"
-            "</GetMemberMessagesRequest>"
-        )
+        _, api_base = _base_urls(settings.EBAY_ENVIRONMENT)
+        headers = {"Authorization": f"Bearer {decrypt_secret(creds['access_token'])}"}
         client = await self._get_client()
+
         try:
-            resp = await client.post(
-                f"{_trading_base_url(settings.EBAY_ENVIRONMENT)}/ws/api.dll",
-                content=xml_body,
-                headers={
-                    "X-EBAY-API-SITEID": "0",
-                    "X-EBAY-API-COMPATIBILITY-LEVEL": "1155",
-                    "X-EBAY-API-CALL-NAME": "GetMemberMessages",
-                    "X-EBAY-API-IAF-TOKEN": decrypt_secret(creds["access_token"]),
-                    "Content-Type": "text/xml",
-                },
+            resp = await client.get(
+                f"{api_base}/commerce/message/v1/conversation",
+                headers=headers,
+                params={"conversation_type": "FROM_MEMBERS"},
             )
+            if resp.status_code != 200:
+                logger.warning("[eBay] GET conversation -> %d: %s", resp.status_code, resp.text[:300])
+                return []
+            conversations = (resp.json() or {}).get("conversations", [])
         except Exception as exc:
-            logger.error("[eBay] GetMemberMessages failed: %r", exc, exc_info=True)
+            logger.error("[eBay] GET conversation failed: %r", exc, exc_info=True)
+            return []
+
+        conversation_id = None
+        for conv in conversations:
+            other = (
+                conv.get("otherPartyUsername")
+                or (conv.get("otherParty") or {}).get("username")
+                or (conv.get("recipient") or {}).get("username")
+            )
+            if other == buyer_username:
+                conversation_id = conv.get("conversationId")
+                break
+        if conversation_id is None:
             return []
 
         try:
-            root = ElementTree.fromstring(resp.text)
-        except ElementTree.ParseError:
-            logger.warning("[eBay] GetMemberMessages non-XML response (status %d): %s", resp.status_code, resp.text[:200])
-            return []
-
-        if root.findtext("e:Ack", namespaces=_TRADING_XML_NS) not in ("Success", "Warning"):
-            logger.warning("[eBay] GetMemberMessages -> %s", resp.text[:300])
+            resp = await client.get(
+                f"{api_base}/commerce/message/v1/conversation/{conversation_id}",
+                headers=headers,
+                params={"conversation_type": "FROM_MEMBERS"},
+            )
+            if resp.status_code != 200:
+                logger.warning("[eBay] GET conversation/%s -> %d: %s", conversation_id, resp.status_code, resp.text[:300])
+                return []
+            messages = (resp.json() or {}).get("messages", [])
+        except Exception as exc:
+            logger.error("[eBay] GET conversation/%s failed: %r", conversation_id, exc, exc_info=True)
             return []
 
         results = []
-        for exchange in root.findall(".//e:MemberMessageExchange", namespaces=_TRADING_XML_NS):
-            sender_id = exchange.findtext(".//e:SenderID", namespaces=_TRADING_XML_NS)
-            body_text = exchange.findtext(".//e:Body", namespaces=_TRADING_XML_NS) or ""
-            created_raw = exchange.findtext(".//e:CreationDate", namespaces=_TRADING_XML_NS)
-            question_id = exchange.findtext(".//e:QuestionId", namespaces=_TRADING_XML_NS)
+        for msg in messages:
+            sender = msg.get("senderUsername")
+            created_raw = msg.get("createdDate")
             sent_at = None
             if created_raw:
                 try:
@@ -458,20 +471,277 @@ class EbayConnector(CommerceConnector):
                 except ValueError:
                     pass
             results.append(NormalizedMessage(
-                external_message_id=question_id or f"{item_id}:{created_raw}",
+                external_message_id=msg.get("messageId"),
                 external_order_id=order.external_order_id,
-                external_case_id=None,
-                body=body_text,
+                external_case_id=str(conversation_id),
+                body=msg.get("messageBody") or "",
                 sent_at=sent_at,
                 # direction computed HERE, not by the generic sync loop —
-                # each connector's own notion of "sender" varies too much
-                # (eBay: username; Mercado Libre: numeric user_id; Allegro:
-                # a role enum) to share one comparison generically. eBay's
-                # buyer_name IS the eBay username (see fetch_orders()), so
-                # a direct string match is correct here.
-                raw_metadata={"direction": "inbound" if sender_id and sender_id == order.buyer_name else "outbound"},
+                # eBay's buyer_name IS the eBay username (see
+                # fetch_orders()), so a direct string match is correct.
+                raw_metadata={"direction": "inbound" if sender and sender == buyer_username else "outbound"},
             ))
         return results
+
+    # ------------------------------------------------------------------
+    # Notification API — real webhook-driven intake (2026-09-17), see
+    # module docstring. register_webhooks() sets up a per-connection
+    # destination + subscribes it to NEW_MESSAGE/BUYER_QUESTION;
+    # normalize_event() is the notification route's dispatch target.
+    # ------------------------------------------------------------------
+
+    async def register_webhooks(self, connection: MarketplaceConnection) -> None:
+        creds = await self._ensure_fresh_token(connection)
+        if not creds:
+            logger.warning("[eBay] register_webhooks: could not refresh token for connection %s", connection.id)
+            return
+
+        settings = get_settings()
+        _, api_base = _base_urls(settings.EBAY_ENVIRONMENT)
+        headers = {
+            "Authorization": f"Bearer {decrypt_secret(creds['access_token'])}",
+            "Content-Type": "application/json",
+        }
+        client = await self._get_client()
+
+        # Verification token: 32-80 chars, [A-Za-z0-9_-] — generated once
+        # per connection and persisted, since createDestination needs the
+        # SAME token every time it's (re-)registered, and the webhook
+        # route needs it to compute the challenge response.
+        verification_token = connection.credentials.get("notification_verification_token")
+        if not verification_token:
+            verification_token = secrets.token_urlsafe(48)[:64]
+            connection.credentials = {**connection.credentials, "notification_verification_token": verification_token}
+
+        endpoint = f"{settings.EBAY_WEBHOOK_PUBLIC_BASE_URL}/api/v1/webhooks/marketplace/ebay/notification/{connection.id}"
+
+        try:
+            resp = await client.post(
+                f"{api_base}/commerce/notification/v1/destination",
+                headers=headers,
+                json={"name": f"itsm-{connection.id}", "deliveryConfig": {"endpoint": endpoint, "verificationToken": verification_token}},
+            )
+            if resp.status_code not in (200, 201, 204):
+                logger.warning("[eBay] createDestination -> %d: %s", resp.status_code, resp.text[:300])
+                return
+        except Exception as exc:
+            logger.error("[eBay] createDestination failed: %r", exc, exc_info=True)
+            return
+
+        # createDestination returns 204 with no body (confirmed via eBay's
+        # own docs) — destinationId has to be looked up afterward via
+        # getDestinations, matched on the endpoint we just registered.
+        try:
+            resp = await client.get(f"{api_base}/commerce/notification/v1/destination", headers=headers)
+            destinations = (resp.json() or {}).get("destinations", []) if resp.status_code == 200 else []
+        except Exception as exc:
+            logger.error("[eBay] getDestinations failed: %r", exc, exc_info=True)
+            return
+
+        destination_id = None
+        for dest in destinations:
+            if (dest.get("deliveryConfig") or {}).get("endpoint") == endpoint:
+                destination_id = dest.get("destinationId")
+                break
+        if destination_id is None:
+            logger.warning("[eBay] could not find our own destination after creating it (connection %s)", connection.id)
+            return
+
+        # topicId isn't a confirmed literal string (eBay's release note used
+        # the plain-English names "New Message"/"Buyer Question", not
+        # necessarily the API's topicId spelling) — resolved live via
+        # getTopics rather than guessed, matched on the topicId itself
+        # first (in case it IS exactly "NEW_MESSAGE"/"BUYER_QUESTION"),
+        # falling back to a substring match on the description.
+        try:
+            resp = await client.get(f"{api_base}/commerce/notification/v1/topic", headers=headers)
+            topics = (resp.json() or {}).get("topics", []) if resp.status_code == 200 else []
+        except Exception as exc:
+            logger.error("[eBay] getTopics failed: %r", exc, exc_info=True)
+            return
+
+        wanted = {"NEW_MESSAGE": ("new_message", "new message"), "BUYER_QUESTION": ("buyer_question", "buyer question")}
+        resolved_topic_ids = []
+        for topic in topics:
+            topic_id = topic.get("topicId") or ""
+            description = (topic.get("description") or "").lower()
+            for canonical, needles in wanted.items():
+                if topic_id.upper() == canonical or any(n in topic_id.lower() or n in description for n in needles):
+                    resolved_topic_ids.append(topic_id)
+                    break
+
+        if not resolved_topic_ids:
+            logger.warning("[eBay] could not resolve NEW_MESSAGE/BUYER_QUESTION topicIds from getTopics (connection %s) — subscriptions not created", connection.id)
+            return
+
+        for topic_id in resolved_topic_ids:
+            try:
+                resp = await client.post(
+                    f"{api_base}/commerce/notification/v1/subscription",
+                    headers=headers,
+                    json={"topicId": topic_id, "destinationId": destination_id, "status": "ENABLED", "payload": {"format": "JSON"}},
+                )
+                if resp.status_code not in (200, 201, 204):
+                    logger.warning("[eBay] createSubscription(%s) -> %d: %s", topic_id, resp.status_code, resp.text[:300])
+            except Exception as exc:
+                logger.error("[eBay] createSubscription(%s) failed: %r", topic_id, exc, exc_info=True)
+
+        logger.info("[eBay] registered notification destination + subscriptions for connection %s: %s", connection.id, resolved_topic_ids)
+
+    async def verify_notification_signature(self, connection: MarketplaceConnection, raw_body: bytes, signature_header: str) -> bool:
+        """X-EBAY-SIGNATURE verification — base64-decoded header carries a
+        key id ('kid') and the signature itself; ECDSA+SHA1 over the raw
+        request body, verified against a public key fetched (and cached,
+        eBay's own recommended 1hr TTL) via getPublicKey. UNVERIFIED against
+        live traffic — see config.py's EBAY_NOTIFICATION_SIGNATURE_
+        VERIFICATION_ENABLED for why this can be toggled off if a subtly
+        wrong implementation is blocking real notifications during initial
+        debugging, without ripping the code out."""
+        import json as _json
+
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+        try:
+            decoded = _json.loads(base64.b64decode(signature_header))
+            kid = decoded["kid"]
+            signature = base64.b64decode(decoded["signature"])
+        except Exception as exc:
+            logger.warning("[eBay] could not parse X-EBAY-SIGNATURE header: %r", exc)
+            return False
+
+        cached = _public_key_cache.get(kid)
+        if cached and (time.time() - cached[0]) < _PUBLIC_KEY_CACHE_TTL_SECONDS:
+            _, algorithm, key_pem = cached
+        else:
+            creds = await self._ensure_fresh_token(connection)
+            if not creds:
+                return False
+            settings = get_settings()
+            _, api_base = _base_urls(settings.EBAY_ENVIRONMENT)
+            client = await self._get_client()
+            try:
+                resp = await client.get(
+                    f"{api_base}/commerce/notification/v1/public_key/{kid}",
+                    headers={"Authorization": f"Bearer {decrypt_secret(creds['access_token'])}"},
+                )
+                if resp.status_code != 200:
+                    logger.warning("[eBay] getPublicKey(%s) -> %d: %s", kid, resp.status_code, resp.text[:200])
+                    return False
+                body = resp.json()
+                algorithm = body.get("algorithm", "")
+                key_pem = body.get("key", "")
+            except Exception as exc:
+                logger.error("[eBay] getPublicKey(%s) failed: %r", kid, exc, exc_info=True)
+                return False
+            _public_key_cache[kid] = (time.time(), algorithm, key_pem)
+
+        try:
+            public_key = load_pem_public_key(key_pem.encode() if isinstance(key_pem, str) else key_pem)
+            public_key.verify(signature, raw_body, ec.ECDSA(hashlib.sha1()))
+            return True
+        except Exception as exc:
+            logger.warning("[eBay] signature verification failed: %r", exc)
+            return False
+
+    async def normalize_event(
+        self, event_type: str, payload: dict, *, db=None, tenant_id=None, connection: Optional[MarketplaceConnection] = None
+    ) -> Optional[NormalizedMessage]:
+        """Dispatch target for the Notification API route — event_type is
+        always "ebay_message_notification" (set at the route layer, see
+        marketplace_ebay_notification.py), not a specific topicId, since
+        both NEW_MESSAGE and BUYER_QUESTION funnel into the same "go check
+        for new buyer messages" handling (see module docstring for why the
+        notification body itself isn't parsed for message content).
+
+        Live-fetches the most recently updated unread member conversation
+        and returns its newest message, resolving external_order_id via a
+        best-effort DB lookup: first by matching the conversation's other-
+        party username against an order's buyer_name (most recent order for
+        that buyer), since the Message API's reference container is
+        optional and may not be populated. UNVERIFIED against live traffic."""
+        if event_type != "ebay_message_notification" or connection is None or db is None:
+            return None
+
+        creds = await self._ensure_fresh_token(connection)
+        if not creds:
+            return None
+
+        settings = get_settings()
+        _, api_base = _base_urls(settings.EBAY_ENVIRONMENT)
+        headers = {"Authorization": f"Bearer {decrypt_secret(creds['access_token'])}"}
+        client = await self._get_client()
+
+        try:
+            resp = await client.get(
+                f"{api_base}/commerce/message/v1/conversation",
+                headers=headers,
+                params={"conversation_type": "FROM_MEMBERS", "conversation_status": "UNREAD"},
+            )
+            if resp.status_code != 200:
+                logger.warning("[eBay] notification-triggered GET conversation -> %d: %s", resp.status_code, resp.text[:300])
+                return None
+            conversations = (resp.json() or {}).get("conversations", [])
+        except Exception as exc:
+            logger.error("[eBay] notification-triggered GET conversation failed: %r", exc, exc_info=True)
+            return None
+        if not conversations:
+            return None
+
+        conversation = conversations[0]
+        conversation_id = conversation.get("conversationId")
+        other_party = (
+            conversation.get("otherPartyUsername")
+            or (conversation.get("otherParty") or {}).get("username")
+        )
+
+        try:
+            resp = await client.get(
+                f"{api_base}/commerce/message/v1/conversation/{conversation_id}",
+                headers=headers,
+                params={"conversation_type": "FROM_MEMBERS"},
+            )
+            if resp.status_code != 200:
+                return None
+            messages = (resp.json() or {}).get("messages", [])
+        except Exception as exc:
+            logger.error("[eBay] notification-triggered GET conversation/%s failed: %r", conversation_id, exc, exc_info=True)
+            return None
+        if not messages:
+            return None
+
+        newest = max(messages, key=lambda m: m.get("createdDate") or "")
+        sender = newest.get("senderUsername") or other_party
+
+        external_order_id = None
+        if sender:
+            order = (
+                await db.execute(
+                    select(MarketplaceOrder)
+                    .where(MarketplaceOrder.tenant_id == tenant_id, MarketplaceOrder.buyer_name == sender)
+                    .order_by(MarketplaceOrder.placed_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if order is not None:
+                external_order_id = order.external_order_id
+
+        created_raw = newest.get("createdDate")
+        sent_at = None
+        if created_raw:
+            try:
+                sent_at = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+
+        return NormalizedMessage(
+            external_message_id=newest.get("messageId"),
+            external_order_id=external_order_id,
+            external_case_id=str(conversation_id) if conversation_id else None,
+            body=newest.get("messageBody") or "",
+            sent_at=sent_at,
+            raw_metadata={"direction": "inbound" if sender and sender == other_party else "outbound"},
+        )
 
     def order_url(self, connection: MarketplaceConnection, external_order_id: str) -> Optional[str]:
         """MEDIUM confidence — the /sh/ord/ Seller Hub orders prefix is

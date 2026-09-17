@@ -1,7 +1,12 @@
 """eBay connect/callback/status/disconnect routes — pilot batch #4. No
-webhook route (see connectors/ebay.py's parse_webhook() docstring — eBay's
-notification-signing scheme is unconfirmed). OAuth state via Redis, same
-rationale as the Shopify/Amazon routes.
+order/return webhook route (eBay has none for that — see
+connectors/ebay.py's parse_webhook() docstring). Messaging DOES have a real
+webhook now (2026-09-17, Notification API's NEW_MESSAGE/BUYER_QUESTION
+topics) — registered via register_webhooks() at the end of the callback
+below; the route itself lives in marketplace_ebay_notification.py, a
+separate file since it needs its own challenge-response handshake, not the
+generic marketplace-webhook shape. OAuth state via Redis, same rationale as
+the Shopify/Amazon routes.
 """
 
 import json
@@ -95,7 +100,7 @@ async def ebay_callback(request: Request, db: AsyncSession = Depends(get_db), re
         ),
     }
 
-    existing = (
+    connection = (
         await db.execute(
             select(MarketplaceConnection).where(
                 MarketplaceConnection.tenant_id == entry["tenant_id"],
@@ -103,18 +108,34 @@ async def ebay_callback(request: Request, db: AsyncSession = Depends(get_db), re
             )
         )
     ).scalar_one_or_none()
-    if existing:
-        existing.credentials = credentials
-        existing.status = "connected"
+    if connection:
+        connection.credentials = credentials
+        connection.status = "connected"
     else:
-        db.add(MarketplaceConnection(
+        connection = MarketplaceConnection(
             tenant_id=entry["tenant_id"],
             provider="ebay",
             credentials=credentials,
             status="connected",
             messaging_capability=MessagingCapability.FULL.value,
-        ))
+        )
+        db.add(connection)
     await db.commit()
+    await db.refresh(connection)
+
+    # Notification API destination + NEW_MESSAGE/BUYER_QUESTION subscriptions
+    # (2026-09-17) — best-effort, doesn't block the connect flow on failure
+    # (messaging still works via fetch_messages()'s manual/poll path even
+    # if the push side doesn't register cleanly). May mutate
+    # connection.credentials (stashes a verification token) — persisted
+    # with a second commit since register_webhooks() itself doesn't have a
+    # db session to commit with.
+    try:
+        await ebay_connector.register_webhooks(connection)
+        await db.commit()
+    except Exception as exc:
+        logger.error("[eBay] register_webhooks failed for connection %s: %r", connection.id, exc, exc_info=True)
+
     return RedirectResponse(f"{frontend_admin}?connected=ebay")
 
 
