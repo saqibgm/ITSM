@@ -19,6 +19,8 @@ from app.services.marketplaces.connectors.mercadolibre import mercadolibre_conne
 from app.services.marketplaces.connectors.newegg import newegg_connector
 from app.services.marketplaces.connectors.shopee import shopee_connector
 from app.services.marketplaces.connectors.shopify import shopify_connector
+from app.services.marketplaces.connectors.temu import temu_connector
+from app.services.marketplaces.connectors.tiktokshop import tiktokshop_connector
 from app.services.marketplaces.connectors.walmart import walmart_connector
 from app.services.marketplaces.connectors.wildberries import wildberries_connector
 from app.services.marketplaces.connectors.zalando import zalando_connector
@@ -48,6 +50,10 @@ CONNECTORS: dict[str, CommerceConnector] = {
     "bestbuy": bestbuy_connector,
     "newegg": newegg_connector,
     "shopee": shopee_connector,
+    # Temu / TikTok Shop (2026-09-18) — the final two of the confirmed
+    # 7-marketplace target scope. See each connector module's docstring.
+    "temu": temu_connector,
+    "tiktokshop": tiktokshop_connector,
 }
 
 

@@ -320,6 +320,23 @@ class Settings(BaseSettings):
     SHOPEE_PARTNER_KEY: str = ""
     SHOPEE_REDIRECT_URI: str = ""
 
+    # --- Temu / TikTok Shop (2026-09-18) — the final two of the confirmed
+    # 7-marketplace target scope (Amazon, Best Buy, Walmart, eBay, Shopify,
+    # Temu, TikTok Shop). See each connector's module docstring.
+    TEMU_ENABLED: bool = False
+    TEMU_CLIENT_ID: str = ""
+    TEMU_CLIENT_SECRET: str = ""
+    TEMU_REDIRECT_URI: str = ""
+
+    TIKTOKSHOP_ENABLED: bool = False
+    TIKTOKSHOP_CLIENT_ID: str = ""
+    TIKTOKSHOP_CLIENT_SECRET: str = ""
+    TIKTOKSHOP_REDIRECT_URI: str = ""
+    # Public base URL used to register the NEW_MESSAGE webhook — same
+    # "deployment has to point us at the real host" shape as
+    # AMAZON_INBOUND_EMAIL_DOMAIN / EBAY_WEBHOOK_PUBLIC_BASE_URL.
+    TIKTOKSHOP_WEBHOOK_PUBLIC_URL: str = "https://api.99technologies.com"
+
     # Observability / hardening (S4.2)
     RATE_LIMIT_PER_MINUTE: int = 60
     RATE_LIMIT_BURST: int = 10

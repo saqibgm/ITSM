@@ -56,6 +56,9 @@ from app.api.v1.marketplace_flipkart import router as marketplace_flipkart_route
 from app.api.v1.marketplace_bestbuy import router as marketplace_bestbuy_router
 from app.api.v1.marketplace_newegg import router as marketplace_newegg_router
 from app.api.v1.marketplace_shopee import router as marketplace_shopee_router
+from app.api.v1.marketplace_temu import router as marketplace_temu_router
+from app.api.v1.marketplace_tiktokshop import router as marketplace_tiktokshop_router
+from app.api.v1.marketplace_tiktokshop_webhook import webhook_router as marketplace_tiktokshop_webhook_router
 from app.api.v1.marketplace_sync import router as marketplace_sync_router
 from app.api.v1.marketplace_settings import router as marketplace_settings_router
 
@@ -178,6 +181,10 @@ router.include_router(marketplace_flipkart_router)        # thin, email-fallback
 router.include_router(marketplace_bestbuy_router)          # messaging-only (Mirakl Inbox Threads) — see connectors/bestbuy.py; UNVERIFIED, no live credentials for this batch
 router.include_router(marketplace_newegg_router)           # thin, email-fallback-only — see connectors/newegg.py; UNVERIFIED, no live credentials for this batch
 router.include_router(marketplace_shopee_router)           # messaging-only (Seller Chat) — see connectors/shopee.py; UNVERIFIED, no live credentials for this batch
+
+router.include_router(marketplace_temu_router)              # orders/returns only, no confirmed messaging API — see connectors/temu.py
+router.include_router(marketplace_tiktokshop_router)        # messaging via Customer Service API — see connectors/tiktokshop.py
+router.include_router(marketplace_tiktokshop_webhook_router)  # /api/v1/webhooks/marketplace/tiktokshop/notification (UNAUTH — Authorization-header HMAC verified) — see marketplace_tiktokshop_webhook.py
 
 # Static-path settings route registered before the parametric {provider}/sync
 # route, same defensive ordering convention as tickets.py — no actual
